@@ -9,7 +9,7 @@
     3. Get the binding for each slot
     4. Cache this information for quick lookup
     
-    Author: Ryan (with Claude assistance)
+    Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight)
 ]]--
 

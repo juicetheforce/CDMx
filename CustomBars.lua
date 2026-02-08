@@ -5,7 +5,7 @@
     Allows users to create custom bars and populate them with spells/items
     from their action bars.
     
-    Author: Ryan (with Claude assistance)
+    Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight)
 ]]--
 

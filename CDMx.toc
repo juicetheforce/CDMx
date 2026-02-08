@@ -1,7 +1,7 @@
 ## Interface: 120000
 ## Title: CDMx
 ## Notes: Cooldown Manager Extended - Adds hotkeys and custom tracking bars
-## Author: Ryan (with Claude assistance)
+## Author: Juicetheforce (with Claude assistance)
 ## Version: 0.1.0-alpha
 ## SavedVariables: CDMxDB
 ## OptionalDeps: Masque

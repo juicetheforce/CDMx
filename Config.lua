@@ -4,7 +4,7 @@
     
     Integrates with Blizzard's Interface Options
     
-    Author: Ryan (with Claude assistance)
+    Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight)
 ]]--
 

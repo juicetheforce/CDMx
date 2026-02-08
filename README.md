@@ -129,7 +129,7 @@ A: In Custom Bars settings, check "Square Icons" under Default Style.
 
 ## Credits
 
-**Author**: Ryan (juicetheforce)  
+**Author**: Juicetheforce  
 **Development**: Built with Claude AI assistance  
 **Inspiration**: Cooldown Manager Centered, BetterCooldownManager
 

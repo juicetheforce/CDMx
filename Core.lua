@@ -2,7 +2,7 @@
     Cooldown Tracker - Core.lua
     Handles addon initialization, namespace setup, and saved variables
     
-    Author: Ryan (with Claude assistance)
+    Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight pre-patch / Midnight)
 ]]--
 
