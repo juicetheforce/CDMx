@@ -1,0 +1,19 @@
+# WoW SavedVariables (user-specific settings)
+*.lua.bak
+SavedVariables/
+
+# Development files
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Backup files
+*~
+*.swp
+*.swo
