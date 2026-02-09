@@ -1,8 +1,10 @@
 --[[
     CDMx - Config.lua
-    Configuration UI panel for easy settings management
+    Configuration UI with custom-drawn widgets and collapsible sections.
+    Dark/gold aesthetic matching modern WoW addon style (CMC, ElvUI).
     
-    Integrates with Blizzard's Interface Options
+    All sections collapsed by default. No Blizzard UI templates.
+    Integrates with Blizzard's Settings panel.
     
     Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight)
@@ -10,776 +12,807 @@
 
 local ADDON_NAME, CDM = ...
 
--- VERSION MARKER
-print("|cffFF0000=== CDMx Config.lua VERSION: 2026-02-07-FINAL ===|r")
-
--- Create config module
 CDM.Config = {}
 local Config = CDM.Config
 
---[[
-    Create the main config panel
-]]--
+--============================================================================
+-- COLOR PALETTE
+--============================================================================
+
+local C = {
+    bg          = { 0.10, 0.10, 0.10, 0.95 },
+    headerBg    = { 0.15, 0.15, 0.15, 1.0 },
+    headerHover = { 0.20, 0.20, 0.20, 1.0 },
+    border      = { 0.30, 0.30, 0.30, 1.0 },
+    accent      = { 0.80, 0.70, 0.10, 1.0 },
+    accentDim   = { 0.50, 0.44, 0.06, 1.0 },
+    green       = { 0.20, 0.80, 0.20, 1.0 },
+    text        = { 0.90, 0.90, 0.90, 1.0 },
+    textDim     = { 0.55, 0.55, 0.55, 1.0 },
+    textLabel   = { 0.90, 0.75, 0.10, 1.0 },
+    red         = { 0.80, 0.20, 0.20, 1.0 },
+    sliderTrack = { 0.08, 0.08, 0.08, 1.0 },
+    sliderFill  = { 0.70, 0.60, 0.05, 0.9 },
+    inputBg     = { 0.12, 0.12, 0.12, 1.0 },
+    buttonBg    = { 0.18, 0.18, 0.18, 1.0 },
+    buttonHover = { 0.25, 0.25, 0.25, 1.0 },
+}
+
+local CONTENT_WIDTH = 540
+local INDENT = 20
+local ROW_HEIGHT = 28
+local SECTION_GAP = 8
+
+--============================================================================
+-- WIDGET FACTORY
+--============================================================================
+
+local function CreateSectionHeader(parent, text, yOffset)
+    local header = CreateFrame("Button", nil, parent)
+    header:SetPoint("TOPLEFT", INDENT, yOffset)
+    header:SetSize(CONTENT_WIDTH - (INDENT * 2), 30)
+    
+    header.bg = header:CreateTexture(nil, "BACKGROUND")
+    header.bg:SetAllPoints()
+    header.bg:SetColorTexture(unpack(C.headerBg))
+    
+    header.borderBottom = header:CreateTexture(nil, "ARTWORK")
+    header.borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
+    header.borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
+    header.borderBottom:SetHeight(1)
+    header.borderBottom:SetColorTexture(unpack(C.border))
+    
+    header.indicator = header:CreateFontString(nil, "OVERLAY")
+    header.indicator:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+    header.indicator:SetPoint("RIGHT", header, "RIGHT", -10, 0)
+    header.indicator:SetTextColor(unpack(C.accent))
+    header.indicator:SetText("+")
+    
+    header.label = header:CreateFontString(nil, "OVERLAY")
+    header.label:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+    header.label:SetPoint("LEFT", header, "LEFT", 12, 0)
+    header.label:SetTextColor(unpack(C.text))
+    header.label:SetText(text)
+    
+    local content = CreateFrame("Frame", nil, parent)
+    content:SetPoint("TOPLEFT", header, "BOTTOMLEFT", 0, -4)
+    content:SetWidth(CONTENT_WIDTH - (INDENT * 2))
+    content:Hide()
+    
+    header.expanded = false
+    header.content = content
+    
+    header:SetScript("OnEnter", function(self)
+        self.bg:SetColorTexture(unpack(C.headerHover))
+    end)
+    header:SetScript("OnLeave", function(self)
+        self.bg:SetColorTexture(unpack(C.headerBg))
+    end)
+    
+    header:SetScript("OnClick", function(self)
+        self.expanded = not self.expanded
+        if self.expanded then
+            self.content:Show()
+            self.indicator:SetText("-")
+        else
+            self.content:Hide()
+            self.indicator:SetText("+")
+        end
+        if Config.RecalcLayout then Config:RecalcLayout() end
+    end)
+    
+    return header, content
+end
+
+local function CreateCheckbox(parent, label, checked, onChange, yOffset)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", 0, yOffset)
+    row:SetSize(CONTENT_WIDTH - (INDENT * 2), ROW_HEIGHT)
+    
+    local cb = CreateFrame("Button", nil, row)
+    cb:SetPoint("LEFT", 10, 0)
+    cb:SetSize(18, 18)
+    
+    cb.bg = cb:CreateTexture(nil, "BACKGROUND")
+    cb.bg:SetAllPoints()
+    cb.bg:SetColorTexture(unpack(C.inputBg))
+    
+    cb.borderTex = cb:CreateTexture(nil, "BORDER")
+    cb.borderTex:SetPoint("TOPLEFT", -1, 1)
+    cb.borderTex:SetPoint("BOTTOMRIGHT", 1, -1)
+    cb.borderTex:SetColorTexture(unpack(C.border))
+    
+    cb.check = cb:CreateTexture(nil, "ARTWORK")
+    cb.check:SetPoint("TOPLEFT", 2, -2)
+    cb.check:SetPoint("BOTTOMRIGHT", -2, 2)
+    cb.check:SetColorTexture(unpack(C.accent))
+    
+    cb.checked = checked
+    if checked then cb.check:Show() else cb.check:Hide() end
+    
+    cb:SetScript("OnClick", function(self)
+        self.checked = not self.checked
+        if self.checked then self.check:Show() else self.check:Hide() end
+        if onChange then onChange(self.checked) end
+    end)
+    
+    local text = row:CreateFontString(nil, "OVERLAY")
+    text:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    text:SetPoint("LEFT", cb, "RIGHT", 8, 0)
+    text:SetTextColor(unpack(C.text))
+    text:SetText(label)
+    
+    return cb, yOffset - ROW_HEIGHT
+end
+
+local function CreateSlider(parent, label, min, max, value, step, onChange, yOffset)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", 0, yOffset)
+    row:SetSize(CONTENT_WIDTH - (INDENT * 2), ROW_HEIGHT + 4)
+    
+    local labelText = row:CreateFontString(nil, "OVERLAY")
+    labelText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    labelText:SetPoint("LEFT", 10, 0)
+    labelText:SetTextColor(unpack(C.textLabel))
+    labelText:SetText(label)
+    
+    local valueText = row:CreateFontString(nil, "OVERLAY")
+    valueText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    valueText:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+    valueText:SetTextColor(unpack(C.accent))
+    valueText:SetText(tostring(math.floor(value)))
+    
+    local rightBtn = CreateFrame("Button", nil, row)
+    rightBtn:SetPoint("RIGHT", valueText, "LEFT", -8, 0)
+    rightBtn:SetSize(16, 16)
+    local rightText = rightBtn:CreateFontString(nil, "OVERLAY")
+    rightText:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+    rightText:SetAllPoints()
+    rightText:SetTextColor(unpack(C.textDim))
+    rightText:SetText(">")
+    rightBtn:SetScript("OnEnter", function() rightText:SetTextColor(unpack(C.accent)) end)
+    rightBtn:SetScript("OnLeave", function() rightText:SetTextColor(unpack(C.textDim)) end)
+    
+    local trackWidth = 180
+    local track = CreateFrame("Frame", nil, row)
+    track:SetPoint("RIGHT", rightBtn, "LEFT", -6, 0)
+    track:SetSize(trackWidth, 10)
+    
+    track.bg = track:CreateTexture(nil, "BACKGROUND")
+    track.bg:SetAllPoints()
+    track.bg:SetColorTexture(unpack(C.sliderTrack))
+    
+    track.borderTex = track:CreateTexture(nil, "BORDER")
+    track.borderTex:SetPoint("TOPLEFT", -1, 1)
+    track.borderTex:SetPoint("BOTTOMRIGHT", 1, -1)
+    track.borderTex:SetColorTexture(0.05, 0.05, 0.05, 1)
+    
+    track.fill = track:CreateTexture(nil, "ARTWORK")
+    track.fill:SetPoint("TOPLEFT", track, "TOPLEFT", 1, -1)
+    track.fill:SetHeight(8)
+    track.fill:SetColorTexture(unpack(C.sliderFill))
+    
+    local leftBtn = CreateFrame("Button", nil, row)
+    leftBtn:SetPoint("RIGHT", track, "LEFT", -6, 0)
+    leftBtn:SetSize(16, 16)
+    local leftText = leftBtn:CreateFontString(nil, "OVERLAY")
+    leftText:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+    leftText:SetAllPoints()
+    leftText:SetTextColor(unpack(C.textDim))
+    leftText:SetText("<")
+    leftBtn:SetScript("OnEnter", function() leftText:SetTextColor(unpack(C.accent)) end)
+    leftBtn:SetScript("OnLeave", function() leftText:SetTextColor(unpack(C.textDim)) end)
+    
+    local currentValue = math.max(min, math.min(max, value))
+    
+    local function UpdateVisuals()
+        local pct = (currentValue - min) / (max - min)
+        track.fill:SetWidth(math.max(1, pct * (trackWidth - 2)))
+        valueText:SetText(tostring(math.floor(currentValue)))
+    end
+    
+    local function SetValue(v)
+        v = math.max(min, math.min(max, v))
+        v = math.floor(v / step + 0.5) * step
+        if v ~= currentValue then
+            currentValue = v
+            UpdateVisuals()
+            if onChange then onChange(currentValue) end
+        end
+    end
+    
+    leftBtn:SetScript("OnClick", function() SetValue(currentValue - step) end)
+    rightBtn:SetScript("OnClick", function() SetValue(currentValue + step) end)
+    
+    track:EnableMouse(true)
+    track:SetScript("OnMouseDown", function(self, button)
+        if button == "LeftButton" then
+            local x = select(1, GetCursorPosition()) / self:GetEffectiveScale()
+            local left = self:GetLeft()
+            local pct = math.max(0, math.min(1, (x - left) / trackWidth))
+            SetValue(min + pct * (max - min))
+        end
+    end)
+    
+    track:EnableMouseWheel(true)
+    track:SetScript("OnMouseWheel", function(self, delta)
+        SetValue(currentValue + delta * step)
+    end)
+    
+    row:EnableMouseWheel(true)
+    row:SetScript("OnMouseWheel", function(self, delta)
+        SetValue(currentValue + delta * step)
+    end)
+    
+    UpdateVisuals()
+    row.SetValue = SetValue
+    row.GetValue = function() return currentValue end
+    
+    return row, yOffset - (ROW_HEIGHT + 4)
+end
+
+local function CreateStepper(parent, label, options, current, onChange, yOffset)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", 0, yOffset)
+    row:SetSize(CONTENT_WIDTH - (INDENT * 2), ROW_HEIGHT + 2)
+    
+    local labelText = row:CreateFontString(nil, "OVERLAY")
+    labelText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    labelText:SetPoint("LEFT", 10, 0)
+    labelText:SetTextColor(unpack(C.textLabel))
+    labelText:SetText(label)
+    
+    local currentIndex = 1
+    for i, opt in ipairs(options) do
+        if opt.value == current then currentIndex = i; break end
+    end
+    
+    local rightBtn = CreateFrame("Button", nil, row)
+    rightBtn:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+    rightBtn:SetSize(20, 20)
+    local rightArrow = rightBtn:CreateFontString(nil, "OVERLAY")
+    rightArrow:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+    rightArrow:SetAllPoints()
+    rightArrow:SetTextColor(unpack(C.textDim))
+    rightArrow:SetText(">")
+    rightBtn:SetScript("OnEnter", function() rightArrow:SetTextColor(unpack(C.accent)) end)
+    rightBtn:SetScript("OnLeave", function() rightArrow:SetTextColor(unpack(C.textDim)) end)
+    
+    local display = CreateFrame("Frame", nil, row)
+    display:SetPoint("RIGHT", rightBtn, "LEFT", -4, 0)
+    display:SetSize(160, 22)
+    display.bg = display:CreateTexture(nil, "BACKGROUND")
+    display.bg:SetAllPoints()
+    display.bg:SetColorTexture(unpack(C.inputBg))
+    
+    local displayText = display:CreateFontString(nil, "OVERLAY")
+    displayText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    displayText:SetPoint("CENTER")
+    displayText:SetTextColor(unpack(C.text))
+    displayText:SetText(options[currentIndex].text)
+    
+    local leftBtn = CreateFrame("Button", nil, row)
+    leftBtn:SetPoint("RIGHT", display, "LEFT", -4, 0)
+    leftBtn:SetSize(20, 20)
+    local leftArrow = leftBtn:CreateFontString(nil, "OVERLAY")
+    leftArrow:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+    leftArrow:SetAllPoints()
+    leftArrow:SetTextColor(unpack(C.textDim))
+    leftArrow:SetText("<")
+    leftBtn:SetScript("OnEnter", function() leftArrow:SetTextColor(unpack(C.accent)) end)
+    leftBtn:SetScript("OnLeave", function() leftArrow:SetTextColor(unpack(C.textDim)) end)
+    
+    local function UpdateDisplay()
+        displayText:SetText(options[currentIndex].text)
+        if onChange then onChange(options[currentIndex].value) end
+    end
+    
+    leftBtn:SetScript("OnClick", function()
+        currentIndex = currentIndex - 1
+        if currentIndex < 1 then currentIndex = #options end
+        UpdateDisplay()
+    end)
+    rightBtn:SetScript("OnClick", function()
+        currentIndex = currentIndex + 1
+        if currentIndex > #options then currentIndex = 1 end
+        UpdateDisplay()
+    end)
+    
+    return row, yOffset - (ROW_HEIGHT + 2)
+end
+
+local function CreateStyledButton(parent, text, width, height, onClick, yOffset, xOffset)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetPoint("TOPLEFT", xOffset or 10, yOffset or 0)
+    btn:SetSize(width or 120, height or 24)
+    
+    btn.bg = btn:CreateTexture(nil, "BACKGROUND")
+    btn.bg:SetAllPoints()
+    btn.bg:SetColorTexture(unpack(C.buttonBg))
+    
+    btn.borderTex = btn:CreateTexture(nil, "BORDER")
+    btn.borderTex:SetPoint("TOPLEFT", -1, 1)
+    btn.borderTex:SetPoint("BOTTOMRIGHT", 1, -1)
+    btn.borderTex:SetColorTexture(unpack(C.border))
+    
+    btn.label = btn:CreateFontString(nil, "OVERLAY")
+    btn.label:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    btn.label:SetPoint("CENTER")
+    btn.label:SetTextColor(unpack(C.text))
+    btn.label:SetText(text)
+    
+    btn:SetScript("OnEnter", function(self) self.bg:SetColorTexture(unpack(C.buttonHover)) end)
+    btn:SetScript("OnLeave", function(self) self.bg:SetColorTexture(unpack(C.buttonBg)) end)
+    if onClick then btn:SetScript("OnClick", onClick) end
+    
+    return btn
+end
+
+local function CreateNote(parent, text, yOffset)
+    local note = parent:CreateFontString(nil, "OVERLAY")
+    note:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    note:SetPoint("TOPLEFT", 10, yOffset)
+    note:SetWidth(CONTENT_WIDTH - 60)
+    note:SetJustifyH("LEFT")
+    note:SetTextColor(unpack(C.textDim))
+    note:SetText(text)
+    return note, yOffset - 18
+end
+
+--============================================================================
+-- MAIN PANEL
+--============================================================================
+
 function Config:CreatePanel()
-    local panel = CreateFrame("Frame", "CDM_ConfigPanel")
+    local panel = CreateFrame("Frame", "CDMx_ConfigPanel")
     panel.name = "CDMx"
     
-    -- Create scroll frame
     local scrollFrame = CreateFrame("ScrollFrame", nil, panel, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 3, -4)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -27, 4)
+    scrollFrame:SetPoint("TOPLEFT", 0, -4)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -24, 4)
     
-    -- Create content frame (the scrollable area)
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetSize(580, 800)  -- Width and height of scrollable content
+    content:SetWidth(CONTENT_WIDTH)
+    content:SetHeight(2000)
     scrollFrame:SetScrollChild(content)
     
+    self.panel = panel
+    self.content = content
+    self.sections = {}
+    
     -- Title
-    local title = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("CDMx Settings")
+    local title = content:CreateFontString(nil, "ARTWORK")
+    title:SetFont("Fonts\\MORPHEUS.TTF", 22, "")
+    title:SetPoint("TOPLEFT", INDENT, -12)
+    title:SetTextColor(unpack(C.text))
+    title:SetText("CDMx")
     
-    -- Version
-    local version = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    version:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
-    version:SetText("Version: " .. CDM.version)
-    version:SetTextColor(0.5, 0.5, 0.5)
+    local version = content:CreateFontString(nil, "ARTWORK")
+    version:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    version:SetPoint("LEFT", title, "RIGHT", 10, -2)
+    version:SetTextColor(unpack(C.textDim))
+    version:SetText("v" .. CDM.version)
     
-    local yOffset = -80
+    local subtitle = content:CreateFontString(nil, "ARTWORK")
+    subtitle:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
+    subtitle:SetTextColor(unpack(C.textDim))
+    subtitle:SetText("Cooldown Manager Extended")
     
-    -- === GENERAL SETTINGS ===
-    local generalHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    generalHeader:SetPoint("TOPLEFT", 16, yOffset)
-    generalHeader:SetText("|cff33ff99General Settings|r")
-    yOffset = yOffset - 30
+    local sectionY = -60
     
-    -- Show Hotkeys checkbox
-    local showHotkeys = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    showHotkeys:SetPoint("TOPLEFT", 20, yOffset)
-    showHotkeys.Text:SetText("Show hotkeys on cooldown icons")
-    showHotkeys:SetChecked(CDM.db.showHotkeys)
-    showHotkeys:SetScript("OnClick", function(self)
-        CDM.db.showHotkeys = self:GetChecked()
-        CDM:Print("Hotkeys", CDM.db.showHotkeys and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 30
+    -- ============ GENERAL ============
+    local genHeader, genContent = CreateSectionHeader(content, "General", sectionY)
+    table.insert(self.sections, {header = genHeader, content = genContent})
     
-    -- Hotkey Position dropdown
-    local anchorLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    anchorLabel:SetPoint("TOPLEFT", 20, yOffset)
-    anchorLabel:SetText("Hotkey Position:")
+    local y = -8
+    _, y = CreateCheckbox(genContent, "Show hotkeys on cooldown icons", CDM.db.showHotkeys, function(v)
+        CDM.db.showHotkeys = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    local anchorDropdown = CreateFrame("Frame", "CDM_HotkeyAnchorDropdown", content, "UIDropDownMenuTemplate")
-    anchorDropdown:SetPoint("TOPLEFT", 120, yOffset + 3)
+    _, y = CreateCheckbox(genContent, "Show proc glow when abilities ready", CDM.db.procGlow, function(v)
+        CDM.db.procGlow = v
+    end, y)
     
-    local function SetAnchor(value)
-        CDM.db.hotkeyAnchor = value
-        UIDropDownMenu_SetText(anchorDropdown, value:gsub("TOP", "Top "):gsub("BOTTOM", "Bottom "):gsub("LEFT", "Left"):gsub("RIGHT", "Right"):gsub("CENTER", "Center"))
-        if CDM.BlizzHooks then
-            CDM.BlizzHooks:UpdateAllVisibleFrames()
-        end
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
-    end
+    _, y = CreateStepper(genContent, "Hotkey Position", {
+        {text = "Top Left", value = "TOPLEFT"},
+        {text = "Top Right", value = "TOPRIGHT"},
+        {text = "Bottom Left", value = "BOTTOMLEFT"},
+        {text = "Bottom Right", value = "BOTTOMRIGHT"},
+        {text = "Center", value = "CENTER"},
+    }, CDM.db.hotkeyAnchor or "TOPLEFT", function(v)
+        CDM.db.hotkeyAnchor = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    UIDropDownMenu_Initialize(anchorDropdown, function(self, level)
-        local info = UIDropDownMenu_CreateInfo()
-        
-        local anchors = {
-            {text = "  Top Left", value = "TOPLEFT"},
-            {text = "  Top Right", value = "TOPRIGHT"},
-            {text = "  Bottom Left", value = "BOTTOMLEFT"},
-            {text = "  Bottom Right", value = "BOTTOMRIGHT"},
-            {text = "  Center", value = "CENTER"},
-        }
-        
-        for _, anchor in ipairs(anchors) do
-            info.text = anchor.text
-            info.value = anchor.value
-            info.func = function() SetAnchor(anchor.value) end
-            info.checked = (CDM.db.hotkeyAnchor == anchor.value)
-            UIDropDownMenu_AddButton(info)
-        end
-    end)
+    _, y = CreateStepper(genContent, "Font Outline", {
+        {text = "Outline", value = "OUTLINE"},
+        {text = "Thick Outline", value = "THICKOUTLINE"},
+        {text = "None", value = ""},
+    }, CDM.db.hotkeyOutline or "OUTLINE", function(v)
+        CDM.db.hotkeyOutline = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+    end, y)
     
-    local currentAnchor = CDM.db.hotkeyAnchor or "TOPLEFT"
-    UIDropDownMenu_SetText(anchorDropdown, currentAnchor:gsub("TOP", "Top "):gsub("BOTTOM", "Bottom "):gsub("LEFT", "Left"):gsub("RIGHT", "Right"):gsub("CENTER", "Center"))
-    UIDropDownMenu_SetWidth(anchorDropdown, 150)
-    yOffset = yOffset - 40
+    _, y = CreateSlider(genContent, "X Offset", -20, 20, CDM.db.hotkeyOffsetX or 2, 1, function(v)
+        CDM.db.hotkeyOffsetX = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+    end, y)
     
-    -- Proc Glow checkbox
-    local procGlow = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    procGlow:SetPoint("TOPLEFT", 20, yOffset)
-    procGlow.Text:SetText("Show proc glow when abilities ready")
-    procGlow:SetChecked(CDM.db.procGlow)
-    procGlow:SetScript("OnClick", function(self)
-        CDM.db.procGlow = self:GetChecked()
-        CDM:Print("Proc glow", CDM.db.procGlow and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 50
+    _, y = CreateSlider(genContent, "Y Offset", -20, 20, CDM.db.hotkeyOffsetY or -2, 1, function(v)
+        CDM.db.hotkeyOffsetY = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+    end, y)
     
-    -- === ESSENTIAL COOLDOWNS ===
-    local essentialHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    essentialHeader:SetPoint("TOPLEFT", 16, yOffset)
-    essentialHeader:SetText("|cff33ff99Essential Cooldowns (Large Icons)|r")
-    yOffset = yOffset - 30
+    genContent:SetHeight(math.abs(y) + 8)
     
-    -- Essential Font Size slider
-    local fontSizeSlider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
-    fontSizeSlider:SetPoint("TOPLEFT", 20, yOffset)
-    fontSizeSlider:SetMinMaxValues(8, 24)
-    fontSizeSlider:SetValue(CDM.db.hotkeyFontSize)
-    fontSizeSlider:SetValueStep(1)
-    fontSizeSlider:SetObeyStepOnDrag(true)
-    fontSizeSlider.Text:SetText("Font Size: " .. CDM.db.hotkeyFontSize)
-    fontSizeSlider:SetScript("OnValueChanged", function(self, value)
-        CDM.db.hotkeyFontSize = value
-        self.Text:SetText("Font Size: " .. value)
-        if CDM.BlizzHooks then
-            CDM.BlizzHooks:UpdateAllVisibleFrames()
-        end
-    end)
-    yOffset = yOffset - 40
+    -- ============ BLIZZARD COOLDOWNS ============
+    sectionY = sectionY - 30 - SECTION_GAP
+    local cdmHeader, cdmContent = CreateSectionHeader(content, "Blizzard Cooldowns", sectionY)
+    table.insert(self.sections, {header = cdmHeader, content = cdmContent})
     
-    -- Essential Border checkbox
-    local essentialBorder = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    essentialBorder:SetPoint("TOPLEFT", 20, yOffset)
-    essentialBorder.Text:SetText("Show black borders |cffff6600(requires /reload)|r")
-    essentialBorder:SetChecked(CDM.db.cooldownManager.showBorder)
-    essentialBorder:SetScript("OnClick", function(self)
-        CDM.db.cooldownManager.showBorder = self:GetChecked()
-        CDM:Print("Essential borders", CDM.db.cooldownManager.showBorder and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 30
+    y = -8
+    _, y = CreateNote(cdmContent, "Settings for Blizzard's Essential and Utility cooldown bars.", y)
     
-    -- Essential Square checkbox
-    local essentialSquare = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    essentialSquare:SetPoint("TOPLEFT", 20, yOffset)
-    essentialSquare.Text:SetText("Square icons (uncropped) |cffff6600(requires /reload)|r")
-    essentialSquare:SetChecked(CDM.db.cooldownManager.squareIcons)
-    essentialSquare:SetScript("OnClick", function(self)
-        CDM.db.cooldownManager.squareIcons = self:GetChecked()
-        CDM:Print("Essential square icons", CDM.db.cooldownManager.squareIcons and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 50
+    _, y = CreateSlider(cdmContent, "Essential Font Size", 8, 32, CDM.db.hotkeyFontSize or 16, 1, function(v)
+        CDM.db.hotkeyFontSize = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+    end, y)
     
-    -- === UTILITY COOLDOWNS ===
-    local utilityHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    utilityHeader:SetPoint("TOPLEFT", 16, yOffset)
-    utilityHeader:SetText("|cff33ff99Utility Cooldowns (Small Icons)|r")
-    yOffset = yOffset - 30
+    _, y = CreateSlider(cdmContent, "Utility Font Size", 8, 24, CDM.db.utilityFontSize or 12, 1, function(v)
+        CDM.db.utilityFontSize = v
+        if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+    end, y)
     
-    -- Utility Font Size slider
-    local utilityFontSizeSlider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
-    utilityFontSizeSlider:SetPoint("TOPLEFT", 20, yOffset)
-    utilityFontSizeSlider:SetMinMaxValues(8, 24)
-    utilityFontSizeSlider:SetValue(CDM.db.utilityFontSize or 12)
-    utilityFontSizeSlider:SetValueStep(1)
-    utilityFontSizeSlider:SetObeyStepOnDrag(true)
-    utilityFontSizeSlider.Text:SetText("Font Size: " .. (CDM.db.utilityFontSize or 12))
-    utilityFontSizeSlider:SetScript("OnValueChanged", function(self, value)
-        CDM.db.utilityFontSize = value
-        self.Text:SetText("Font Size: " .. value)
-        if CDM.BlizzHooks then
-            CDM.BlizzHooks:UpdateAllVisibleFrames()
-        end
-    end)
-    yOffset = yOffset - 40
+    _, y = CreateCheckbox(cdmContent, "Show black borders", CDM.db.cooldownManager.showBorder, function(v)
+        CDM.db.cooldownManager.showBorder = v
+    end, y)
     
-    -- Utility uses same borders/square as Essential (shared cooldownManager settings)
-    local utilityNote = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    utilityNote:SetPoint("TOPLEFT", 20, yOffset)
-    utilityNote:SetText("|cff888888(Borders and square icons shared with Essential above)|r")
-    yOffset = yOffset - 50
+    _, y = CreateCheckbox(cdmContent, "Blizzard-style icons (rounded border)", CDM.db.cooldownManager.squareIcons, function(v)
+        CDM.db.cooldownManager.squareIcons = v
+    end, y)
     
-    -- === TRINKET BAR SETTINGS ===
-    local trinketHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    trinketHeader:SetPoint("TOPLEFT", 16, yOffset)
-    trinketHeader:SetText("|cff33ff99Trinket Bar|r")
-    yOffset = yOffset - 30
+    _, y = CreateNote(cdmContent, "Border and icon changes apply on /reload.", y)
+    cdmContent:SetHeight(math.abs(y) + 8)
     
-    -- Trinket Bar Enabled checkbox
-    local trinketEnabled = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    trinketEnabled:SetPoint("TOPLEFT", 20, yOffset)
-    trinketEnabled.Text:SetText("Enable trinket bar")
-    trinketEnabled:SetChecked(CDM.db.trinketBar.enabled)
-    trinketEnabled:SetScript("OnClick", function(self)
-        CDM.db.trinketBar.enabled = self:GetChecked()
-        CDM:Print("Trinket bar", CDM.db.trinketBar.enabled and "enabled" or "disabled")
+    -- ============ TRINKET BAR ============
+    sectionY = sectionY - 30 - SECTION_GAP
+    local trinketHeader, trinketContent = CreateSectionHeader(content, "Trinket Bar", sectionY)
+    table.insert(self.sections, {header = trinketHeader, content = trinketContent})
+    
+    y = -8
+    _, y = CreateCheckbox(trinketContent, "Enable trinket bar", CDM.db.trinketBar.enabled, function(v)
+        CDM.db.trinketBar.enabled = v
         if CDM.TrinketBar and CDM.TrinketBar.frame then
-            if CDM.db.trinketBar.enabled then
-                CDM.TrinketBar:UpdateVisibility()
-            else
-                CDM.TrinketBar.frame:Hide()
-            end
+            if v then CDM.TrinketBar:UpdateVisibility() else CDM.TrinketBar.frame:Hide() end
         end
-    end)
-    yOffset = yOffset - 30
+    end, y)
     
-    -- Visibility dropdown
-    local visibilityLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    visibilityLabel:SetPoint("TOPLEFT", 20, yOffset)
-    visibilityLabel:SetText("Visibility:")
+    _, y = CreateStepper(trinketContent, "Visibility", {
+        {text = "Always Show", value = "always"},
+        {text = "In Combat Only", value = "combat"},
+        {text = "Out of Combat", value = "noCombat"},
+    }, CDM.db.trinketBar.visibility or "always", function(v)
+        CDM.db.trinketBar.visibility = v
+        if CDM.TrinketBar then CDM.TrinketBar:UpdateVisibility() end
+    end, y)
     
-    local visibilityDropdown = CreateFrame("Frame", "CDM_TrinketVisibilityDropdown", content, "UIDropDownMenuTemplate")
-    visibilityDropdown:SetPoint("TOPLEFT", 80, yOffset + 3)
+    _, y = CreateStepper(trinketContent, "Layout", {
+        {text = "Horizontal", value = true},
+        {text = "Vertical", value = false},
+    }, CDM.db.trinketBar.horizontal, function(v)
+        CDM.db.trinketBar.horizontal = v
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    local function SetVisibility(value)
-        CDM.db.trinketBar.visibility = value
-        UIDropDownMenu_SetText(visibilityDropdown, value)
-        if CDM.TrinketBar then
-            CDM.TrinketBar:UpdateVisibility()
-        end
-    end
+    _, y = CreateSlider(trinketContent, "Icon Size", 20, 80, CDM.db.trinketBar.iconSize or 40, 1, function(v)
+        CDM.db.trinketBar.iconSize = v
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    UIDropDownMenu_Initialize(visibilityDropdown, function(self, level)
-        local info = UIDropDownMenu_CreateInfo()
-        
-        info.text = "  Always Show"
-        info.value = "always"
-        info.func = function() SetVisibility("always") end
-        info.checked = (CDM.db.trinketBar.visibility == "always")
-        UIDropDownMenu_AddButton(info)
-        
-        info.text = "  In Combat Only"
-        info.value = "combat"
-        info.func = function() SetVisibility("combat") end
-        info.checked = (CDM.db.trinketBar.visibility == "combat")
-        UIDropDownMenu_AddButton(info)
-        
-        info.text = "  Out of Combat Only"
-        info.value = "noCombat"
-        info.func = function() SetVisibility("noCombat") end
-        info.checked = (CDM.db.trinketBar.visibility == "noCombat")
-        UIDropDownMenu_AddButton(info)
-    end)
+    _, y = CreateSlider(trinketContent, "Spacing", 0, 20, CDM.db.trinketBar.padding or 5, 1, function(v)
+        CDM.db.trinketBar.padding = v
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    UIDropDownMenu_SetText(visibilityDropdown, CDM.db.trinketBar.visibility or "always")
-    UIDropDownMenu_SetWidth(visibilityDropdown, 150)
-    yOffset = yOffset - 40
+    _, y = CreateSlider(trinketContent, "Font Size", 8, 20, CDM.db.trinketBar.hotkeyFontSize or 12, 1, function(v)
+        CDM.db.trinketBar.hotkeyFontSize = v
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
     
-    -- Trinket Font Size slider
-    local trinketFontSizeSlider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
-    trinketFontSizeSlider:SetPoint("TOPLEFT", 20, yOffset)
-    trinketFontSizeSlider:SetMinMaxValues(8, 20)
-    trinketFontSizeSlider:SetValue(CDM.db.trinketBar.hotkeyFontSize or 12)
-    trinketFontSizeSlider:SetValueStep(1)
-    trinketFontSizeSlider:SetObeyStepOnDrag(true)
-    trinketFontSizeSlider.Text:SetText("Font Size: " .. (CDM.db.trinketBar.hotkeyFontSize or 12))
-    trinketFontSizeSlider:SetScript("OnValueChanged", function(self, value)
-        CDM.db.trinketBar.hotkeyFontSize = value
-        self.Text:SetText("Font Size: " .. value)
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
-    end)
-    yOffset = yOffset - 40
+    _, y = CreateCheckbox(trinketContent, "Show black borders", CDM.db.trinketBar.showBorder, function(v)
+        CDM.db.trinketBar.showBorder = v
+    end, y)
     
-    -- Trinket Border checkbox
-    local trinketBorder = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    trinketBorder:SetPoint("TOPLEFT", 20, yOffset)
-    trinketBorder.Text:SetText("Show black borders |cffff6600(requires /reload)|r")
-    trinketBorder:SetChecked(CDM.db.trinketBar.showBorder)
-    trinketBorder:SetScript("OnClick", function(self)
-        CDM.db.trinketBar.showBorder = self:GetChecked()
-        CDM:Print("Trinket borders", CDM.db.trinketBar.showBorder and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 30
+    _, y = CreateCheckbox(trinketContent, "Blizzard-style icons (rounded border)", CDM.db.trinketBar.squareIcons, function(v)
+        CDM.db.trinketBar.squareIcons = v
+    end, y)
     
-    -- Trinket Square checkbox
-    local trinketSquare = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    trinketSquare:SetPoint("TOPLEFT", 20, yOffset)
-    trinketSquare.Text:SetText("Square icons (uncropped) |cffff6600(requires /reload)|r")
-    trinketSquare:SetChecked(CDM.db.trinketBar.squareIcons)
-    trinketSquare:SetScript("OnClick", function(self)
-        CDM.db.trinketBar.squareIcons = self:GetChecked()
-        CDM:Print("Trinket square icons", CDM.db.trinketBar.squareIcons and "enabled" or "disabled")
-    end)
-    yOffset = yOffset - 30
+    _, y = CreateNote(trinketContent, "Border and icon changes apply on /reload. Position bars using Edit Mode.", y)
+    trinketContent:SetHeight(math.abs(y) + 8)
     
-    -- Lock Position checkbox
-    local trinketLocked = CreateFrame("CheckButton", nil, content, "InterfaceOptionsCheckButtonTemplate")
-    trinketLocked:SetPoint("TOPLEFT", 20, yOffset)
-    trinketLocked.Text:SetText("Lock position (disable dragging)")
-    trinketLocked:SetChecked(CDM.db.trinketBar.locked)
-    trinketLocked:SetScript("OnClick", function(self)
-        CDM.db.trinketBar.locked = self:GetChecked()
-        print("|cff33ff99CDMx:|r Trinket bar", CDM.db.trinketBar.locked and "locked" or "unlocked")
-        -- No UpdateLockState needed - trinket bar checks db.locked directly when dragging
-    end)
-    yOffset = yOffset - 30
+    -- ============ CUSTOM BARS ============
+    sectionY = sectionY - 30 - SECTION_GAP
+    local customHeader, customContent = CreateSectionHeader(content, "Custom Bars", sectionY)
+    table.insert(self.sections, {header = customHeader, content = customContent})
     
-    -- Icon Size slider
-    local iconSizeSlider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
-    iconSizeSlider:SetPoint("TOPLEFT", 20, yOffset)
-    iconSizeSlider:SetMinMaxValues(20, 80)
-    iconSizeSlider:SetValue(CDM.db.trinketBar.iconSize)
-    iconSizeSlider:SetValueStep(1)
-    iconSizeSlider:SetObeyStepOnDrag(true)
-    iconSizeSlider.Text:SetText("Icon Size: " .. CDM.db.trinketBar.iconSize)
-    iconSizeSlider:SetScript("OnValueChanged", function(self, value)
-        CDM.db.trinketBar.iconSize = value
-        self.Text:SetText("Icon Size: " .. value)
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
-    end)
-    yOffset = yOffset - 40
+    y = -8
+    _, y = CreateNote(customContent, "Create custom tracking bars for spells and items from your action bars.", y)
     
-    -- Padding slider
-    local paddingSlider = CreateFrame("Slider", nil, content, "OptionsSliderTemplate")
-    paddingSlider:SetPoint("TOPLEFT", 20, yOffset)
-    paddingSlider:SetMinMaxValues(0, 20)
-    paddingSlider:SetValue(CDM.db.trinketBar.padding)
-    paddingSlider:SetValueStep(1)
-    paddingSlider:SetObeyStepOnDrag(true)
-    paddingSlider.Text:SetText("Spacing: " .. CDM.db.trinketBar.padding)
-    paddingSlider:SetScript("OnValueChanged", function(self, value)
-        CDM.db.trinketBar.padding = value
-        self.Text:SetText("Spacing: " .. value)
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
-    end)
-    yOffset = yOffset - 40
-    
-    -- Layout toggle button
-    local layoutButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    layoutButton:SetPoint("TOPLEFT", 20, yOffset)
-    layoutButton:SetSize(150, 25)
-    layoutButton:SetText(CDM.db.trinketBar.horizontal and "Horizontal" or "Vertical")
-    layoutButton:SetScript("OnClick", function(self)
-        CDM.db.trinketBar.horizontal = not CDM.db.trinketBar.horizontal
-        self:SetText(CDM.db.trinketBar.horizontal and "Horizontal" or "Vertical")
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
-    end)
-    yOffset = yOffset - 40
-    
-    -- === RELOAD BUTTON ===
-    local reloadButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    reloadButton:SetPoint("TOPLEFT", 20, yOffset)
-    reloadButton:SetSize(200, 30)
-    reloadButton:SetText("Reload UI")
-    reloadButton:SetScript("OnClick", function(self)
-        ReloadUI()
-    end)
-    
-    local reloadText = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    reloadText:SetPoint("LEFT", reloadButton, "RIGHT", 10, 0)
-    reloadText:SetText("|cffff6600Required for icon styling changes|r")
-    yOffset = yOffset - 50
-    
-    -- === CUSTOM BARS ===
-    local customBarsHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-    customBarsHeader:SetPoint("TOPLEFT", 16, yOffset)
-    customBarsHeader:SetText("|cff33ff99Custom Bars|r")
-    yOffset = yOffset - 30
-    
-    local customBarsText = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    customBarsText:SetPoint("TOPLEFT", 20, yOffset)
-    customBarsText:SetText("Create custom tracking bars with spells/items from your action bars")
-    yOffset = yOffset - 25
-    
-    -- Universal Lock/Unlock Toggle
-    local lockAllCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-    lockAllCheckbox:SetPoint("TOPLEFT", 20, yOffset)
-    lockAllCheckbox:SetSize(24, 24)
-    
-    -- Check if all bars are locked
-    local allLocked = true
-    if CDM.db.trinketBar then
-        allLocked = allLocked and CDM.db.trinketBar.locked
-    end
-    for _, barSettings in pairs(CDM.db.customBars or {}) do
-        allLocked = allLocked and barSettings.locked
-    end
-    lockAllCheckbox:SetChecked(allLocked)
-    
-    lockAllCheckbox:SetScript("OnClick", function(self)
-        local locked = self:GetChecked()
-        -- Lock/unlock trinket bar (no UpdateLockState method - it checks db directly)
-        if CDM.db.trinketBar then
-            CDM.db.trinketBar.locked = locked
-        end
-        -- Lock/unlock all custom bars
-        for barName, _ in pairs(CDM.db.customBars or {}) do
-            CDM.db.customBars[barName].locked = locked
-            if CDM.CustomBars then
-                CDM.CustomBars:UpdateLockState(barName)
-            end
-        end
-        print("|cff33ff99CDMx:|r", locked and "All bars locked" or "All bars unlocked")
-        print("|cff33ff99CDMx:|r", "Trinket bar will update on next interaction")
-    end)
-    
-    local lockAllLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    lockAllLabel:SetPoint("LEFT", lockAllCheckbox, "RIGHT", 5, 0)
-    lockAllLabel:SetText("Lock All Bars (Trinket + Custom)")
-    yOffset = yOffset - 35
-    
-    -- Add New Bar button
-    local addBarButton = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-    addBarButton:SetPoint("TOPLEFT", 20, yOffset)
-    addBarButton:SetSize(150, 25)
-    addBarButton:SetText("+ Add New Bar")
-    addBarButton:SetScript("OnClick", function(self)
-        -- Prompt for bar name
+    local addBtn = CreateStyledButton(customContent, "+ Add New Bar", 140, 26, function()
         StaticPopupDialogs["CDMX_NEW_BAR"] = {
             text = "Enter name for new custom bar:",
-            button1 = "Create",
-            button2 = "Cancel",
-            hasEditBox = true,
-            OnAccept = function(self, data)
+            button1 = "Create", button2 = "Cancel", hasEditBox = true,
+            OnAccept = function(self)
                 local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
                 local name = editBox and editBox:GetText() or ""
-                
                 if name and name ~= "" then
                     if CDM.db.customBars[name] then
-                        print("|cff33ff99CDMx:|r Bar '" .. name .. "' already exists!")
+                        CDM:Msg("Bar '" .. name .. "' already exists!")
                     else
-                        -- Create new bar with default settings
                         CDM.db.customBars[name] = {
-                            enabled = true,
-                            locked = false,
-                            horizontal = true,
-                            iconSize = 40,
-                            padding = 5,
+                            enabled = true, locked = false, horizontal = true,
+                            iconSize = 40, padding = 5,
                             position = { point = "CENTER", x = 0, y = 0 },
-                            squareIcons = CDM.db.customBarsStyle.squareIcons,  -- Use global setting
-                            showBorder = CDM.db.customBarsStyle.showBorder,    -- Use global setting
-                            hotkeyFontSize = 12,
-                            hotkeyAnchor = "TOPLEFT",  -- Where hotkeys appear on icons
-                            visibility = "always",
-                            items = {},
-                            numSlots = 5,  -- Default number of slots
+                            squareIcons = CDM.db.customBarsStyle.squareIcons,
+                            showBorder = CDM.db.customBarsStyle.showBorder,
+                            hotkeyFontSize = 12, hotkeyAnchor = "TOPLEFT",
+                            visibility = "always", items = {}, numSlots = 5,
                         }
-                        print("|cff33ff99CDMx:|r Created custom bar:", name)
-                        print("|cff33ff99CDMx:|r Type /reload to see your new bar")
-                        print("|cff33ff99CDMx:|r Use /cdmx bar", name, "config to configure it")
+                        CDM:Msg("Created bar: " .. name .. " - /reload to see it")
                     end
-                else
-                    print("|cff33ff99CDMx:|r No name entered")
                 end
             end,
             OnShow = function(self)
                 local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
-                if editBox then
-                    editBox:SetFocus()
-                end
+                if editBox then editBox:SetFocus() end
             end,
-            timeout = 0,
-            whileDead = true,
-            hideOnEscape = true,
-            preferredIndex = 3,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
         }
         StaticPopup_Show("CDMX_NEW_BAR")
-    end)
-    yOffset = yOffset - 35
+    end, y)
+    y = y - 34
     
-    -- Global Style Settings for All Custom Bars
-    local styleHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    styleHeader:SetPoint("TOPLEFT", 20, yOffset)
-    styleHeader:SetText("|cffFFD700Default Style:|r")
-    yOffset = yOffset - 25
+    y = y - 4
+    local styleLabel = customContent:CreateFontString(nil, "OVERLAY")
+    styleLabel:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    styleLabel:SetPoint("TOPLEFT", 10, y)
+    styleLabel:SetTextColor(unpack(C.textDim))
+    styleLabel:SetText("Default Style for New Bars:")
+    y = y - 22
     
-    -- Square Icons checkbox
-    local squareCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-    squareCheckbox:SetPoint("TOPLEFT", 30, yOffset)
-    squareCheckbox:SetSize(24, 24)
-    squareCheckbox:SetChecked(CDM.db.customBarsStyle.squareIcons)
-    squareCheckbox:SetScript("OnClick", function(self)
-        CDM.db.customBarsStyle.squareIcons = self:GetChecked()
-        -- Update all existing bars
-        for barName, barSettings in pairs(CDM.db.customBars or {}) do
-            barSettings.squareIcons = self:GetChecked()
-            if CDM.CustomBars then
-                CDM.CustomBars:UpdateLayout(barName)
-                CDM.CustomBars:UpdateBar(barName)
-            end
+    _, y = CreateCheckbox(customContent, "Blizzard-style icons (rounded border)", CDM.db.customBarsStyle.squareIcons, function(v)
+        CDM.db.customBarsStyle.squareIcons = v
+        for barName, s in pairs(CDM.db.customBars or {}) do
+            s.squareIcons = v
+            if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
         end
-    end)
-    local squareLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    squareLabel:SetPoint("LEFT", squareCheckbox, "RIGHT", 5, 0)
-    squareLabel:SetText("Square Icons")
+    end, y)
     
-    -- Show Border checkbox
-    local borderCheckbox = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
-    borderCheckbox:SetPoint("LEFT", squareLabel, "RIGHT", 20, 0)
-    borderCheckbox:SetSize(24, 24)
-    borderCheckbox:SetChecked(CDM.db.customBarsStyle.showBorder)
-    borderCheckbox:SetScript("OnClick", function(self)
-        CDM.db.customBarsStyle.showBorder = self:GetChecked()
-        -- Update all existing bars
-        for barName, barSettings in pairs(CDM.db.customBars or {}) do
-            barSettings.showBorder = self:GetChecked()
-            if CDM.CustomBars then
-                CDM.CustomBars:UpdateBar(barName)
-            end
+    _, y = CreateCheckbox(customContent, "Show Border", CDM.db.customBarsStyle.showBorder, function(v)
+        CDM.db.customBarsStyle.showBorder = v
+        for barName, s in pairs(CDM.db.customBars or {}) do
+            s.showBorder = v
+            if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
         end
-    end)
-    local borderLabel = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-    borderLabel:SetPoint("LEFT", borderCheckbox, "RIGHT", 5, 0)
-    borderLabel:SetText("Show Border")
-    yOffset = yOffset - 35
+    end, y)
     
-    -- Custom Bars Management
-    local barListY = yOffset
+    y = y - 8
     
     if CDM.db.customBars and next(CDM.db.customBars) then
         for barName, barSettings in pairs(CDM.db.customBars) do
-            -- Bar name header
-            local barHeader = content:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-            barHeader:SetPoint("TOPLEFT", 20, barListY)
-            barHeader:SetText("|cffFFD700" .. barName .. "|r")
-            barListY = barListY - 25
+            local barLabel = customContent:CreateFontString(nil, "OVERLAY")
+            barLabel:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+            barLabel:SetPoint("TOPLEFT", 10, y)
+            barLabel:SetTextColor(unpack(C.accent))
+            barLabel:SetText(barName)
             
-            -- Settings summary
-            local settingsText = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-            settingsText:SetPoint("TOPLEFT", 30, barListY)
-            settingsText:SetText(string.format(
-                "%s | %s",
-                barSettings.horizontal and "Horizontal" or "Vertical",
-                barSettings.locked and "|cff888888Locked|r" or "|cff00ff00Unlocked|r"
-            ))
-            barListY = barListY - 25
+            local barStatus = customContent:CreateFontString(nil, "OVERLAY")
+            barStatus:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+            barStatus:SetPoint("LEFT", barLabel, "RIGHT", 10, 0)
+            barStatus:SetTextColor(unpack(C.textDim))
+            barStatus:SetText(string.format("(%s | %d slots | %d items)",
+                barSettings.horizontal and "H" or "V",
+                barSettings.numSlots or 5, #(barSettings.items or {})))
+            y = y - 22
             
-            -- Slots slider
-            local slotsSliderName = "CDMx_Bar_" .. barName:gsub("%W", "") .. "_Slots"
-            local slotsSlider = CreateFrame("Slider", slotsSliderName, content, "OptionsSliderTemplate")
-            slotsSlider:SetPoint("TOPLEFT", 30, barListY)
-            slotsSlider:SetMinMaxValues(1, 12)
-            slotsSlider:SetValue(barSettings.numSlots or 5)
-            slotsSlider:SetValueStep(1)
-            slotsSlider:SetObeyStepOnDrag(true)
-            slotsSlider:SetWidth(150)
-            _G[slotsSliderName.."Low"]:SetText("1")
-            _G[slotsSliderName.."High"]:SetText("12")
-            _G[slotsSliderName.."Text"]:SetText("Slots: " .. (barSettings.numSlots or 5))
-            slotsSlider:SetScript("OnValueChanged", function(self, value)
-                barSettings.numSlots = value
-                _G[slotsSliderName.."Text"]:SetText("Slots: " .. value)
-                print("|cff33ff99CDMx:|r Bar '" .. barName .. "' slots set to " .. value .. " - /reload to apply")
-            end)
+            local sep = customContent:CreateTexture(nil, "ARTWORK")
+            sep:SetPoint("TOPLEFT", 10, y + 4)
+            sep:SetSize(CONTENT_WIDTH - 60, 1)
+            sep:SetColorTexture(unpack(C.border))
             
-            -- Icon Size slider
-            local sizeSliderName = "CDMx_Bar_" .. barName:gsub("%W", "") .. "_Size"
-            local sizeSlider = CreateFrame("Slider", sizeSliderName, content, "OptionsSliderTemplate")
-            sizeSlider:SetPoint("LEFT", slotsSlider, "RIGHT", 20, 0)
-            sizeSlider:SetMinMaxValues(20, 80)
-            sizeSlider:SetValue(barSettings.iconSize or 40)
-            sizeSlider:SetValueStep(1)
-            sizeSlider:SetObeyStepOnDrag(true)
-            sizeSlider:SetWidth(150)
-            _G[sizeSliderName.."Low"]:SetText("20")
-            _G[sizeSliderName.."High"]:SetText("80")
-            _G[sizeSliderName.."Text"]:SetText("Icon Size: " .. (barSettings.iconSize or 40))
-            sizeSlider:SetScript("OnValueChanged", function(self, value)
-                barSettings.iconSize = value
-                _G[sizeSliderName.."Text"]:SetText("Icon Size: " .. value)
+            _, y = CreateSlider(customContent, "Slots", 1, 12, barSettings.numSlots or 5, 1, function(v)
+                barSettings.numSlots = v
+                CDM:Msg("Bar '" .. barName .. "' slots: " .. v .. " - /reload to apply")
+            end, y)
+            
+            _, y = CreateSlider(customContent, "Icon Size", 20, 80, barSettings.iconSize or 40, 1, function(v)
+                barSettings.iconSize = v
                 if CDM.CustomBars then
                     CDM.CustomBars:UpdateLayout(barName)
                     CDM.CustomBars:UpdateBar(barName)
                 end
-            end)
+            end, y)
             
-            barListY = barListY - 45
-            
-            -- Padding slider
-            local paddingSliderName = "CDMx_Bar_" .. barName:gsub("%W", "") .. "_Padding"
-            local paddingSlider = CreateFrame("Slider", paddingSliderName, content, "OptionsSliderTemplate")
-            paddingSlider:SetPoint("TOPLEFT", 30, barListY)
-            paddingSlider:SetMinMaxValues(0, 20)
-            paddingSlider:SetValue(barSettings.padding or 5)
-            paddingSlider:SetValueStep(1)
-            paddingSlider:SetObeyStepOnDrag(true)
-            paddingSlider:SetWidth(150)
-            _G[paddingSliderName.."Low"]:SetText("0")
-            _G[paddingSliderName.."High"]:SetText("20")
-            _G[paddingSliderName.."Text"]:SetText("Padding: " .. (barSettings.padding or 5))
-            paddingSlider:SetScript("OnValueChanged", function(self, value)
-                barSettings.padding = value
-                _G[paddingSliderName.."Text"]:SetText("Padding: " .. value)
+            _, y = CreateSlider(customContent, "Spacing", 0, 20, barSettings.padding or 5, 1, function(v)
+                barSettings.padding = v
                 if CDM.CustomBars then
                     CDM.CustomBars:UpdateLayout(barName)
                     CDM.CustomBars:UpdateBar(barName)
                 end
-            end)
+            end, y)
             
-            barListY = barListY - 45
+            _, y = CreateSlider(customContent, "Font Size", 8, 24, barSettings.hotkeyFontSize or 12, 1, function(v)
+                barSettings.hotkeyFontSize = v
+                if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
+            end, y)
             
-            -- Font Size slider
-            local fontSliderName = "CDMx_Bar_" .. barName:gsub("%W", "") .. "_Font"
-            local fontSlider = CreateFrame("Slider", fontSliderName, content, "OptionsSliderTemplate")
-            fontSlider:SetPoint("TOPLEFT", 30, barListY)
-            fontSlider:SetMinMaxValues(8, 24)
-            fontSlider:SetValue(barSettings.hotkeyFontSize or 12)
-            fontSlider:SetValueStep(1)
-            fontSlider:SetObeyStepOnDrag(true)
-            fontSlider:SetWidth(150)
-            _G[fontSliderName.."Low"]:SetText("8")
-            _G[fontSliderName.."High"]:SetText("24")
-            _G[fontSliderName.."Text"]:SetText("Font Size: " .. (barSettings.hotkeyFontSize or 12))
-            fontSlider:SetScript("OnValueChanged", function(self, value)
-                barSettings.hotkeyFontSize = value
-                _G[fontSliderName.."Text"]:SetText("Font Size: " .. value)
+            _, y = CreateStepper(customContent, "Layout", {
+                {text = "Horizontal", value = true},
+                {text = "Vertical", value = false},
+            }, barSettings.horizontal, function(v)
+                barSettings.horizontal = v
                 if CDM.CustomBars then
+                    CDM.CustomBars:UpdateLayout(barName)
                     CDM.CustomBars:UpdateBar(barName)
                 end
-            end)
+            end, y)
             
-            barListY = barListY - 45
+            _, y = CreateStepper(customContent, "Visibility", {
+                {text = "Always Show", value = "always"},
+                {text = "In Combat Only", value = "combat"},
+                {text = "Out of Combat", value = "noCombat"},
+            }, barSettings.visibility or "always", function(v)
+                barSettings.visibility = v
+                if CDM.CustomBars then CDM.CustomBars:UpdateVisibility(barName) end
+            end, y)
             
-            -- Buttons row
-            local deleteBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-            deleteBtn:SetPoint("TOPLEFT", 30, barListY)
-            deleteBtn:SetSize(60, 22)
-            deleteBtn:SetText("Delete")
-            local deleteName = barName
-            deleteBtn:SetScript("OnClick", function()
-                CDM.db.customBars[deleteName] = nil
-                print("|cff33ff99CDMx:|r Deleted bar:", deleteName, "- /reload to apply")
-            end)
+            y = y - 4
+            local editBtn = CreateStyledButton(customContent, "Edit Items", 90, 22, function()
+                Config:ShowItemPicker(barName)
+            end, y)
             
-            local lockBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-            lockBtn:SetPoint("LEFT", deleteBtn, "RIGHT", 5, 0)
-            lockBtn:SetSize(80, 22)
-            lockBtn:SetText(barSettings.locked and "Unlock" or "Lock")
-            local lockName = barName
-            lockBtn:SetScript("OnClick", function()
-                local s = CDM.db.customBars[lockName]
-                if s then
-                    s.locked = not s.locked
-                    print("|cff33ff99CDMx:|r Bar", lockName, s.locked and "locked" or "unlocked")
-                    if CDM.CustomBars then CDM.CustomBars:UpdateLockState(lockName) end
-                end
-            end)
+            local delBtnName = barName
+            local delBtn = CreateStyledButton(customContent, "Delete", 70, 22, function()
+                StaticPopupDialogs["CDMX_DELETE_BAR"] = {
+                    text = "Delete bar '" .. delBtnName .. "'?",
+                    button1 = "Delete", button2 = "Cancel",
+                    OnAccept = function()
+                        CDM.db.customBars[delBtnName] = nil
+                        CDM:Msg("Deleted '" .. delBtnName .. "' - /reload to apply")
+                    end,
+                    timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+                }
+                StaticPopup_Show("CDMX_DELETE_BAR")
+            end, y, 108)
+            delBtn.bg:SetColorTexture(0.25, 0.12, 0.12, 1)
+            delBtn:SetScript("OnEnter", function(self) self.bg:SetColorTexture(0.35, 0.15, 0.15, 1) end)
+            delBtn:SetScript("OnLeave", function(self) self.bg:SetColorTexture(0.25, 0.12, 0.12, 1) end)
             
-            local layoutBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-            layoutBtn:SetPoint("LEFT", lockBtn, "RIGHT", 5, 0)
-            layoutBtn:SetSize(100, 22)
-            layoutBtn:SetText("Toggle Layout")
-            local layoutName = barName
-            layoutBtn:SetScript("OnClick", function()
-                local s = CDM.db.customBars[layoutName]
-                if s then
-                    s.horizontal = not s.horizontal
-                    print("|cff33ff99CDMx:|r Bar", layoutName, "layout:", s.horizontal and "horizontal" or "vertical")
-                    if CDM.CustomBars then
-                        CDM.CustomBars:UpdateLayout(layoutName)
-                        CDM.CustomBars:UpdateBar(layoutName)
-                    end
-                end
-            end)
-            
-            local editItemsBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
-            editItemsBtn:SetPoint("LEFT", layoutBtn, "RIGHT", 5, 0)
-            editItemsBtn:SetSize(80, 22)
-            editItemsBtn:SetText("Edit Items")
-            local editBarName = barName
-            editItemsBtn:SetScript("OnClick", function()
-                CDM.Config:ShowItemPicker(editBarName)
-            end)
-            
-            barListY = barListY - 30
-            
-            local cmdText = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-            cmdText:SetPoint("TOPLEFT", 30, barListY)
-            cmdText:SetText("|cff888888Commands: /cdmx bar " .. barName .. " [slots|size|font] <value>|r")
-            barListY = barListY - 30
+            y = y - 34
         end
     else
-        local noBarsText = content:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-        noBarsText:SetPoint("TOPLEFT", 20, barListY)
-        noBarsText:SetText("|cff888888No custom bars created yet|r")
-        barListY = barListY - 25
+        local noBars = customContent:CreateFontString(nil, "OVERLAY")
+        noBars:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+        noBars:SetPoint("TOPLEFT", 10, y)
+        noBars:SetTextColor(unpack(C.textDim))
+        noBars:SetText("No custom bars created yet.")
+        y = y - 22
     end
     
-    yOffset = barListY - 10
+    customContent:SetHeight(math.abs(y) + 8)
     
-    local manageText = content:CreateFontString(nil, "ARTWORK", "GameFontNormalSmall")
-    manageText:SetPoint("TOPLEFT", 20, yOffset)
-    manageText:SetText("|cffff6600To manage bars: Use /cdmx bar <name> <command>|r\n" ..
-                       "Commands: enable, disable, lock, unlock, layout, delete")
+    -- ============ UTILITIES ============
+    sectionY = sectionY - 30 - SECTION_GAP
+    local utilHeader, utilContent = CreateSectionHeader(content, "Utilities", sectionY)
+    table.insert(self.sections, {header = utilHeader, content = utilContent})
     
-    -- Register with Blizzard Interface Options
+    y = -8
+    CreateStyledButton(utilContent, "Open Edit Mode", 160, 26, function()
+        if EditModeManagerFrame then ShowUIPanel(EditModeManagerFrame) end
+    end, y)
+    y = y - 34
+    
+    CreateStyledButton(utilContent, "Rescan Hotkeys", 160, 26, function()
+        if CDM.Hotkeys then
+            CDM.Hotkeys:ScanActionBars()
+            if CDM.BlizzHooks then CDM.BlizzHooks:UpdateAllVisibleFrames() end
+            CDM:Msg("Hotkeys rescanned")
+        end
+    end, y)
+    y = y - 34
+    
+    CreateStyledButton(utilContent, "Reload UI", 160, 26, function() ReloadUI() end, y)
+    y = y - 28
+    
+    _, y = CreateNote(utilContent, "Reload applies border, icon, and slot changes.", y)
+    utilContent:SetHeight(math.abs(y) + 8)
+    
+    -- Footer
+    sectionY = sectionY - 30 - SECTION_GAP - 10
+    local footer = content:CreateFontString(nil, "ARTWORK")
+    footer:SetFont("Fonts\\FRIZQT__.TTF", 9, "")
+    footer:SetPoint("TOPLEFT", INDENT, sectionY)
+    footer:SetTextColor(unpack(C.textDim))
+    footer:SetText("CDMx v" .. CDM.version .. "  |  /cdmx help for commands  |  Position bars with Edit Mode")
+    
+    content:SetHeight(math.abs(sectionY) + 40)
+    
+    -- Layout recalc
+    function Config:RecalcLayout()
+        local cy = -60
+        for _, section in ipairs(self.sections) do
+            section.header:ClearAllPoints()
+            section.header:SetPoint("TOPLEFT", content, "TOPLEFT", INDENT, cy)
+            cy = cy - 30
+            if section.header.expanded and section.content:IsShown() then
+                cy = cy - section.content:GetHeight() - 4
+            end
+            cy = cy - SECTION_GAP
+        end
+        footer:ClearAllPoints()
+        footer:SetPoint("TOPLEFT", content, "TOPLEFT", INDENT, cy - 10)
+        content:SetHeight(math.abs(cy) + 40)
+    end
+    
+    -- Register with Blizzard Settings
     if Settings and Settings.RegisterCanvasLayoutCategory then
-        -- 11.0+ API
         local category = Settings.RegisterCanvasLayoutCategory(panel, panel.name)
         Settings.RegisterAddOnCategory(category)
+        Config.settingsCategory = category
     elseif InterfaceOptions_AddCategory then
-        -- Pre-11.0 API
         InterfaceOptions_AddCategory(panel)
     end
     
     return panel
 end
 
--- Show Item Picker popup for a custom bar
+function Config:Open()
+    if Settings and Settings.OpenToCategory and self.settingsCategory then
+        Settings.OpenToCategory(self.settingsCategory:GetID())
+    elseif SettingsPanel then
+        SettingsPanel:Open()
+    end
+end
+
+--============================================================================
+-- ITEM PICKER
+--============================================================================
+
 function Config:ShowItemPicker(barName)
     local barSettings = CDM.db.customBars[barName]
-    if not barSettings then
-        print("|cff33ff99CDMx:|r Bar not found:", barName)
-        return
-    end
+    if not barSettings then CDM:Msg("Bar not found: " .. barName); return end
     
-    -- Scan action bars for all spells and items
+    if self.pickerFrame then self.pickerFrame:Hide(); self.pickerFrame = nil end
+    
     local availableItems = {}
     local seenIDs = {}
     
-    -- Scan action buttons (uses same logic as HotkeyDetection)
-    local actionBars = {
-        {prefix = "ActionButton", count = 12},           -- Main bar
-        {prefix = "MultiBarBottomLeftButton", count = 12},
-        {prefix = "MultiBarBottomRightButton", count = 12},
-        {prefix = "MultiBarRightButton", count = 12},
-        {prefix = "MultiBarLeftButton", count = 12},
-        {prefix = "MultiBar5Button", count = 12},
-        {prefix = "MultiBar6Button", count = 12},
-        {prefix = "MultiBar7Button", count = 12},
-    }
-    
-    for _, bar in ipairs(actionBars) do
-        for i = 1, bar.count do
-            local button = _G[bar.prefix .. i]
-            if button then
-                local actionType, id = GetActionInfo(button.action)
-                if actionType == "spell" and id then
-                    local spellName = C_Spell.GetSpellName(id)
-                    local spellTexture = C_Spell.GetSpellTexture(id)
-                    if spellName and not seenIDs["spell:" .. id] then
-                        table.insert(availableItems, {
-                            type = "spell",
-                            id = id,
-                            name = spellName,
-                            texture = spellTexture,
-                        })
-                        seenIDs["spell:" .. id] = true
-                    end
-                elseif actionType == "item" and id then
-                    local itemName, _, _, _, _, _, _, _, _, itemTexture = GetItemInfo(id)
-                    if itemName and not seenIDs["item:" .. id] then
-                        table.insert(availableItems, {
-                            type = "item",
-                            id = id,
-                            name = itemName,
-                            texture = itemTexture,
-                        })
-                        seenIDs["item:" .. id] = true
-                    end
-                end
+    for slot = 1, 120 do
+        local actionType, id = GetActionInfo(slot)
+        if actionType == "spell" and id then
+            local spellName = C_Spell.GetSpellName(id)
+            local spellTexture = C_Spell.GetSpellTexture(id)
+            if spellName and not seenIDs["spell:" .. id] then
+                table.insert(availableItems, { type = "spell", id = id, name = spellName, texture = spellTexture })
+                seenIDs["spell:" .. id] = true
+            end
+        elseif actionType == "item" and id then
+            local itemName, _, _, _, _, _, _, _, _, itemTexture = C_Item.GetItemInfo(id)
+            if itemName and not seenIDs["item:" .. id] then
+                table.insert(availableItems, { type = "item", id = id, name = itemName, texture = itemTexture })
+                seenIDs["item:" .. id] = true
             end
         end
     end
     
-    -- Sort alphabetically
     table.sort(availableItems, function(a, b) return a.name < b.name end)
     
-    -- Create popup frame
-    local picker = CreateFrame("Frame", "CDMx_ItemPicker", UIParent, "BasicFrameTemplateWithInset")
-    picker:SetSize(400, 500)
+    local picker = CreateFrame("Frame", "CDMx_ItemPicker", UIParent, "BackdropTemplate")
+    picker:SetSize(380, 480)
     picker:SetPoint("CENTER")
     picker:SetFrameStrata("DIALOG")
     picker:EnableMouse(true)
@@ -787,117 +820,157 @@ function Config:ShowItemPicker(barName)
     picker:RegisterForDrag("LeftButton")
     picker:SetScript("OnDragStart", picker.StartMoving)
     picker:SetScript("OnDragStop", picker.StopMovingOrSizing)
+    picker:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    picker:SetBackdropColor(0.08, 0.08, 0.08, 0.95)
+    picker:SetBackdropBorderColor(unpack(C.border))
+    self.pickerFrame = picker
     
-    -- Title
-    picker.title = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    picker.title:SetPoint("TOP", 0, -5)
-    picker.title:SetText("Edit Items: " .. barName)
+    local titleBar = CreateFrame("Frame", nil, picker)
+    titleBar:SetPoint("TOPLEFT", 0, 0)
+    titleBar:SetPoint("TOPRIGHT", 0, 0)
+    titleBar:SetHeight(28)
+    titleBar.bg = titleBar:CreateTexture(nil, "BACKGROUND")
+    titleBar.bg:SetAllPoints()
+    titleBar.bg:SetColorTexture(unpack(C.headerBg))
     
-    -- Instructions
-    local instructions = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    instructions:SetPoint("TOPLEFT", 15, -30)
-    instructions:SetText("Select spells/items to display on this bar:")
+    local titleText = titleBar:CreateFontString(nil, "OVERLAY")
+    titleText:SetFont("Fonts\\FRIZQT__.TTF", 12, "")
+    titleText:SetPoint("LEFT", 10, 0)
+    titleText:SetTextColor(unpack(C.text))
+    titleText:SetText("Edit Items: " .. barName)
     
-    -- Scroll frame
+    local closeBtn = CreateFrame("Button", nil, titleBar)
+    closeBtn:SetPoint("RIGHT", -6, 0)
+    closeBtn:SetSize(20, 20)
+    local closeX = closeBtn:CreateFontString(nil, "OVERLAY")
+    closeX:SetFont("Fonts\\FRIZQT__.TTF", 14, "")
+    closeX:SetAllPoints()
+    closeX:SetTextColor(unpack(C.textDim))
+    closeX:SetText("x")
+    closeBtn:SetScript("OnEnter", function() closeX:SetTextColor(unpack(C.red)) end)
+    closeBtn:SetScript("OnLeave", function() closeX:SetTextColor(unpack(C.textDim)) end)
+    closeBtn:SetScript("OnClick", function() picker:Hide() end)
+    
+    local instructions = picker:CreateFontString(nil, "OVERLAY")
+    instructions:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    instructions:SetPoint("TOPLEFT", 10, -34)
+    instructions:SetTextColor(unpack(C.textDim))
+    instructions:SetText("Select spells and items to track on this bar:")
+    
     local scrollFrame = CreateFrame("ScrollFrame", nil, picker, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", 10, -50)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -30, 45)
+    scrollFrame:SetPoint("TOPLEFT", 8, -52)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 44)
     
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-    scrollChild:SetSize(360, 1)
+    scrollChild:SetSize(330, 1)
     scrollFrame:SetScrollChild(scrollChild)
     
-    -- Build existing items lookup
     local selectedItems = {}
     for _, item in ipairs(barSettings.items or {}) do
         selectedItems[item.type .. ":" .. item.id] = true
     end
     
-    -- Create checkboxes
     local checkboxes = {}
-    local yOffset = -5
+    local itemY = -4
     
-    for i, item in ipairs(availableItems) do
-        local checkbox = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
-        checkbox:SetPoint("TOPLEFT", 10, yOffset)
-        checkbox:SetSize(24, 24)
-        checkbox:SetChecked(selectedItems[item.type .. ":" .. item.id])
-        checkbox.itemData = item
-        table.insert(checkboxes, checkbox)
+    for _, item in ipairs(availableItems) do
+        local row = CreateFrame("Button", nil, scrollChild)
+        row:SetPoint("TOPLEFT", 0, itemY)
+        row:SetSize(320, 26)
+        row.highlight = row:CreateTexture(nil, "BACKGROUND")
+        row.highlight:SetAllPoints()
+        row.highlight:SetColorTexture(1, 1, 1, 0.03)
+        row.highlight:Hide()
+        row:SetScript("OnEnter", function(self) self.highlight:Show() end)
+        row:SetScript("OnLeave", function(self) self.highlight:Hide() end)
         
-        -- Icon
-        local icon = scrollChild:CreateTexture(nil, "ARTWORK")
-        icon:SetPoint("LEFT", checkbox, "RIGHT", 5, 0)
-        icon:SetSize(24, 24)
+        local cb = CreateFrame("Button", nil, row)
+        cb:SetPoint("LEFT", 4, 0)
+        cb:SetSize(16, 16)
+        cb.bg = cb:CreateTexture(nil, "BACKGROUND")
+        cb.bg:SetAllPoints()
+        cb.bg:SetColorTexture(unpack(C.inputBg))
+        cb.borderTex = cb:CreateTexture(nil, "BORDER")
+        cb.borderTex:SetPoint("TOPLEFT", -1, 1)
+        cb.borderTex:SetPoint("BOTTOMRIGHT", 1, -1)
+        cb.borderTex:SetColorTexture(unpack(C.border))
+        cb.check = cb:CreateTexture(nil, "ARTWORK")
+        cb.check:SetPoint("TOPLEFT", 2, -2)
+        cb.check:SetPoint("BOTTOMRIGHT", -2, 2)
+        cb.check:SetColorTexture(unpack(C.accent))
+        
+        local key = item.type .. ":" .. item.id
+        cb.checked = selectedItems[key] or false
+        if cb.checked then cb.check:Show() else cb.check:Hide() end
+        cb.itemData = item
+        
+        local function ToggleCheck()
+            cb.checked = not cb.checked
+            if cb.checked then cb.check:Show() else cb.check:Hide() end
+        end
+        cb:SetScript("OnClick", ToggleCheck)
+        row:SetScript("OnClick", ToggleCheck)
+        table.insert(checkboxes, cb)
+        
+        local icon = row:CreateTexture(nil, "ARTWORK")
+        icon:SetPoint("LEFT", cb, "RIGHT", 6, 0)
+        icon:SetSize(22, 22)
         icon:SetTexture(item.texture)
+        icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
         
-        -- Name
-        local label = scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        label:SetPoint("LEFT", icon, "RIGHT", 5, 0)
-        label:SetText(item.name)
+        local name = row:CreateFontString(nil, "OVERLAY")
+        name:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+        name:SetPoint("LEFT", icon, "RIGHT", 6, 0)
+        name:SetTextColor(unpack(C.text))
+        name:SetText(item.name)
         
-        yOffset = yOffset - 30
+        local typeBadge = row:CreateFontString(nil, "OVERLAY")
+        typeBadge:SetFont("Fonts\\FRIZQT__.TTF", 9, "")
+        typeBadge:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        typeBadge:SetTextColor(unpack(C.textDim))
+        typeBadge:SetText(item.type == "spell" and "spell" or "item")
+        
+        itemY = itemY - 26
     end
     
-    -- Adjust scroll child height
-    scrollChild:SetHeight(math.abs(yOffset))
+    scrollChild:SetHeight(math.abs(itemY) + 8)
     
-    -- Save button
-    local saveBtn = CreateFrame("Button", nil, picker, "UIPanelButtonTemplate")
-    saveBtn:SetPoint("BOTTOMLEFT", 15, 10)
-    saveBtn:SetSize(100, 25)
-    saveBtn:SetText("Save")
-    saveBtn:SetScript("OnClick", function()
-        -- Collect selected items
+    local saveBtn = CreateStyledButton(picker, "Save", 80, 24, function()
         barSettings.items = {}
         for _, cb in ipairs(checkboxes) do
-            if cb:GetChecked() then
-                table.insert(barSettings.items, {
-                    type = cb.itemData.type,
-                    id = cb.itemData.id,
-                })
+            if cb.checked then
+                table.insert(barSettings.items, { type = cb.itemData.type, id = cb.itemData.id })
             end
         end
-        print("|cff33ff99CDMx:|r Saved " .. #barSettings.items .. " items to bar '" .. barName .. "'")
-        print("|cff33ff99CDMx:|r /reload to see changes")
+        CDM:Msg("Saved " .. #barSettings.items .. " items to '" .. barName .. "' - /reload to apply")
         picker:Hide()
-    end)
+    end, nil)
+    saveBtn:ClearAllPoints()
+    saveBtn:SetPoint("BOTTOMLEFT", picker, "BOTTOMLEFT", 10, 10)
     
-    -- Cancel button
-    local cancelBtn = CreateFrame("Button", nil, picker, "UIPanelButtonTemplate")
-    cancelBtn:SetPoint("LEFT", saveBtn, "RIGHT", 10, 0)
-    cancelBtn:SetSize(100, 25)
-    cancelBtn:SetText("Cancel")
-    cancelBtn:SetScript("OnClick", function()
-        picker:Hide()
-    end)
+    local cancelBtn = CreateStyledButton(picker, "Cancel", 80, 24, function() picker:Hide() end, nil)
+    cancelBtn:ClearAllPoints()
+    cancelBtn:SetPoint("LEFT", saveBtn, "RIGHT", 8, 0)
     
-    -- Select All button
-    local selectAllBtn = CreateFrame("Button", nil, picker, "UIPanelButtonTemplate")
-    selectAllBtn:SetPoint("BOTTOMRIGHT", -15, 10)
-    selectAllBtn:SetSize(100, 25)
-    selectAllBtn:SetText("Select All")
-    selectAllBtn:SetScript("OnClick", function()
-        for _, cb in ipairs(checkboxes) do
-            cb:SetChecked(true)
-        end
-    end)
+    local selectAllBtn = CreateStyledButton(picker, "Select All", 80, 24, function()
+        for _, cb in ipairs(checkboxes) do cb.checked = true; cb.check:Show() end
+    end, nil)
+    selectAllBtn:ClearAllPoints()
+    selectAllBtn:SetPoint("BOTTOMRIGHT", picker, "BOTTOMRIGHT", -10, 10)
     
-    -- Clear All button
-    local clearAllBtn = CreateFrame("Button", nil, picker, "UIPanelButtonTemplate")
-    clearAllBtn:SetPoint("RIGHT", selectAllBtn, "LEFT", -10, 0)
-    clearAllBtn:SetSize(100, 25)
-    clearAllBtn:SetText("Clear All")
-    clearAllBtn:SetScript("OnClick", function()
-        for _, cb in ipairs(checkboxes) do
-            cb:SetChecked(false)
-        end
-    end)
+    local clearAllBtn = CreateStyledButton(picker, "Clear All", 80, 24, function()
+        for _, cb in ipairs(checkboxes) do cb.checked = false; cb.check:Hide() end
+    end, nil)
+    clearAllBtn:ClearAllPoints()
+    clearAllBtn:SetPoint("RIGHT", selectAllBtn, "LEFT", -8, 0)
     
     picker:Show()
 end
 
--- Initialize config panel on load
+--============================================================================
+-- INITIALIZATION
+--============================================================================
+
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:SetScript("OnEvent", function(self, event, addonName)

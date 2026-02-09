@@ -1,13 +1,12 @@
 --[[
-    Cooldown Tracker - HotkeyDetection.lua
-    Scans action bars to detect which hotkey is bound to each spell/item
+    CDMx - HotkeyDetection.lua
+    Scans action bars to detect which hotkey is bound to each spell/item.
     
-    This is the core of adding hotkey displays to cooldown icons.
-    We need to:
-    1. Scan all action bar slots
-    2. Map spell IDs to action slots
+    Core system for adding hotkey displays to cooldown icons:
+    1. Scan all action bar slots on login and changes
+    2. Map spell/item IDs to action slots
     3. Get the binding for each slot
-    4. Cache this information for quick lookup
+    4. Cache for quick lookup (with JIT fallback for misses)
     
     Author: Juicetheforce (with Claude assistance)
     Target: WoW 12.0.x (Midnight)
@@ -15,151 +14,98 @@
 
 local ADDON_NAME, CDM = ...
 
--- Create hotkey detection module
 CDM.Hotkeys = {}
 local Hotkeys = CDM.Hotkeys
 
--- Cache for spell ID -> hotkey mappings
+-- Cache: "spell:12345" -> "S1", "item:67890" -> "CM4"
 Hotkeys.cache = {}
 
--- Spell ID mappings for abilities that use different IDs in different contexts
--- Format: [cooldownManagerSpellID] = actionBarSpellID
+--============================================================================
+-- SPELL ID MAPPINGS
+--============================================================================
+
+-- Cooldown Manager sometimes uses different spell IDs than action bars.
+-- Map: [cooldownManagerID] = actionBarID
 Hotkeys.spellIDMap = {
-    [49411] = 1217605,   -- Void Metamorphosis (cooldown manager ID -> action bar ID)
+    [49411] = 1217605,   -- Void Metamorphosis
     [90226] = 198793,    -- Vengeful Retreat
-    -- Reap/Eradicate: No mapping needed, JIT lookup handles it after first use
-    -- Note: Voidblade (1245412) is the SAME on both action bar and cooldown manager
 }
 
--- Alternate spell IDs to check during JIT lookup
--- When we see spell A on cooldown manager, also check for spell B on action bars
+-- When looking up spell A, also check spell B (for transformed abilities)
 Hotkeys.alternateSpellIDs = {
-    [1226019] = 1225826,  -- When cooldown shows Reap (1226019), also check for Eradicate (1225826)
-    [1225826] = 1226019,  -- When cooldown shows Eradicate (1225826), also check for Reap (1226019)
+    [1226019] = 1225826,  -- Reap <-> Eradicate
+    [1225826] = 1226019,
 }
 
--- List of action bar button names to scan
--- These are the standard WoW action bar frame names
-local ACTION_BAR_BUTTONS = {
-    -- Main action bar (1-12)
-    "ActionButton",
-    -- Bottom left bar (13-24)
-    "MultiBarBottomLeftButton",
-    -- Bottom right bar (25-36)
-    "MultiBarBottomRightButton",
-    -- Right bar (37-48)
-    "MultiBarRightButton",
-    -- Right bar 2 (49-60)
-    "MultiBarLeftButton",
-    -- Extra bars (added in various expansions)
-    "MultiBar5Button",  -- Bar 5
-    "MultiBar6Button",  -- Bar 6
-    "MultiBar7Button",  -- Bar 7
-}
+--============================================================================
+-- ACTION BAR SCANNING
+--============================================================================
 
 --[[
-    Get the hotkey text for an action bar slot
-    This handles shift/ctrl/alt modifiers
+    Get the formatted hotkey text for an action bar slot number.
 ]]--
 function Hotkeys:GetHotkeyForSlot(slot)
     local key = GetBindingKey("ACTIONBUTTON" .. slot)
-    
-    if not key then
-        return nil
-    end
-    
-    -- Clean up the binding text for display
-    key = key:gsub("SHIFT%-", "S")
-    key = key:gsub("CTRL%-", "C")
-    key = key:gsub("ALT%-", "A")
-    key = key:gsub("BUTTON", "M")  -- Mouse buttons
-    key = key:gsub("MOUSEWHEELUP", "MwU")
-    key = key:gsub("MOUSEWHEELDOWN", "MwD")
-    
-    return key
+    if not key then return nil end
+    return CDM.UI:FormatHotkey(key)
 end
 
 --[[
-    Get spell ID from an action slot
+    Get spell/item ID from an action slot.
     Returns: spellID, itemID (one will be nil)
 ]]--
 function Hotkeys:GetSpellFromSlot(slot)
     local actionType, id = GetActionInfo(slot)
-    
     if actionType == "spell" then
         return id, nil
     elseif actionType == "item" then
         return nil, id
-    elseif actionType == "macro" then
-        -- Macros can contain spells or items, but we'll handle this in Phase 2
-        return nil, nil
     end
-    
     return nil, nil
 end
 
 --[[
-    Scan all action bars and build the cache
-    This maps spell IDs to their hotkeys
+    Full scan of all action bars. Builds the spell/item -> hotkey cache.
 ]]--
 function Hotkeys:ScanActionBars()
-    -- Clear existing cache
     wipe(self.cache)
     
-    local scanned = 0
     local found = 0
     
-    -- Method 1: Scan standard action bar slots (works for default UI)
-    for slot = 1, 120 do  -- Cover all possible action slots
+    -- Scan standard action bar slots (covers all bar addons)
+    for slot = 1, 120 do
         local spellID, itemID = self:GetSpellFromSlot(slot)
-        
         if spellID or itemID then
             local hotkey = self:GetHotkeyForSlot(slot)
-            
             if hotkey then
                 local cacheKey = spellID and ("spell:" .. spellID) or ("item:" .. itemID)
-                if not self.cache[cacheKey] then  -- Don't overwrite if already found
+                if not self.cache[cacheKey] then
                     self.cache[cacheKey] = hotkey
                     found = found + 1
-                    
-                    if CDM.debug and (spellID == 1226019 or spellID == 1245412) then
-                        local spellName = spellID and C_Spell.GetSpellName(spellID) or "Unknown"
-                        CDM:Print(string.format("Cached slot %d: %s => %s (%s)", 
-                            slot, cacheKey, hotkey, spellName))
-                    end
                 end
             end
         end
-        scanned = scanned + 1
     end
     
-    -- Method 2: Scan ElvUI action buttons directly (if ElvUI is loaded)
+    -- Also scan ElvUI action buttons directly if available
     if ElvUI then
         local E = unpack(ElvUI)
         if E and E.ActionBars then
-            for barName, bar in pairs(E.ActionBars.handledBars or {}) do
+            for _, bar in pairs(E.ActionBars.handledBars or {}) do
                 if bar.buttons then
                     for _, button in pairs(bar.buttons) do
                         if button.action then
                             local spellID, itemID = self:GetSpellFromSlot(button.action)
                             if spellID or itemID then
-                                -- Get hotkey directly from button (ElvUI stores it)
-                                local hotkey = button.keyBoundTarget or button.bindName
-                                if hotkey then
-                                    hotkey = GetBindingKey(hotkey)
-                                    if hotkey then
-                                        -- Clean up the binding text
-                                        hotkey = hotkey:gsub("SHIFT%-", "S")
-                                        hotkey = hotkey:gsub("CTRL%-", "C")
-                                        hotkey = hotkey:gsub("ALT%-", "A")
-                                        hotkey = hotkey:gsub("BUTTON", "M")
-                                        
+                                local bindTarget = button.keyBoundTarget or button.bindName
+                                if bindTarget then
+                                    local rawKey = GetBindingKey(bindTarget)
+                                    if rawKey then
+                                        local hotkey = CDM.UI:FormatHotkey(rawKey)
                                         local cacheKey = spellID and ("spell:" .. spellID) or ("item:" .. itemID)
-                                        self.cache[cacheKey] = hotkey
-                                        found = found + 1
-                                        
-                                        if CDM.verbose then
-                                            CDM:Print("Found ElvUI binding:", cacheKey, "=", hotkey)
+                                        if not self.cache[cacheKey] then
+                                            self.cache[cacheKey] = hotkey
+                                            found = found + 1
                                         end
                                     end
                                 end
@@ -172,62 +118,48 @@ function Hotkeys:ScanActionBars()
     end
     
     if CDM.debug then
-        CDM:Print(string.format("Scanned %d slots, found %d with hotkeys", scanned, found))
+        CDM:Print(string.format("Scanned action bars, found %d hotkeys", found))
     end
 end
 
+--============================================================================
+-- HOTKEY LOOKUP
+--============================================================================
+
 --[[
-    Get hotkey for a spell ID
-    Returns: hotkey string or nil
+    Get hotkey for a spell ID. Checks cache first, then does JIT lookup
+    including spell ID mapping and alternate IDs.
 ]]--
 function Hotkeys:GetHotkeyForSpell(spellID)
     if not spellID then return nil end
     
-    -- Check if this spell ID needs to be mapped to a different ID
+    -- Apply spell ID mapping
     local mappedID = self.spellIDMap[spellID]
     if mappedID then
-        if CDM.debug then
-            CDM:Print(string.format("Mapped spell %d -> %d", spellID, mappedID))
-        end
         spellID = mappedID
     end
     
+    -- Check cache
     local cacheKey = "spell:" .. spellID
-    local cached = self.cache[cacheKey]
-    
-    -- If in cache, return it
-    if cached then
-        return cached
+    if self.cache[cacheKey] then
+        return self.cache[cacheKey]
     end
     
-    -- NOT in cache - do just-in-time lookup
-    if CDM.debug then
-        CDM:Print(string.format("⚡ JIT lookup for spell:%d", spellID))
-    end
+    -- JIT lookup: scan all slots for this spell (and alternates)
+    local idsToCheck = { spellID }
+    local alt = self.alternateSpellIDs[spellID]
+    if alt then table.insert(idsToCheck, alt) end
     
-    -- Build list of spell IDs to check (original + alternates)
-    local spellIDsToCheck = {spellID}
-    local alternateID = self.alternateSpellIDs[spellID]
-    if alternateID then
-        table.insert(spellIDsToCheck, alternateID)
-        if CDM.debug then
-            CDM:Print(string.format("  Also checking alternate: %d", alternateID))
-        end
-    end
-    
-    -- Scan all action slots quickly to find any of these spell IDs
     for slot = 1, 120 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" then
-            -- Check if this matches any of our target spell IDs
-            for _, targetID in ipairs(spellIDsToCheck) do
+            for _, targetID in ipairs(idsToCheck) do
                 if id == targetID then
                     local hotkey = self:GetHotkeyForSlot(slot)
                     if hotkey then
-                        -- Cache it for next time (using ORIGINAL spell ID as key)
                         self.cache[cacheKey] = hotkey
                         if CDM.debug then
-                            CDM:Print(string.format("  ✓ Found spell:%d in slot %d: %s", id, slot, hotkey))
+                            CDM:Print(string.format("JIT: spell:%d slot %d -> %s", id, slot, hotkey))
                         end
                         return hotkey
                     end
@@ -236,28 +168,22 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         end
     end
     
-    -- Still not found - check ElvUI directly
+    -- Try ElvUI fallback
     if ElvUI then
         local E = unpack(ElvUI)
         if E and E.ActionBars then
-            for barName, bar in pairs(E.ActionBars.handledBars or {}) do
+            for _, bar in pairs(E.ActionBars.handledBars or {}) do
                 if bar.buttons then
                     for _, button in pairs(bar.buttons) do
                         if button.action then
                             local actionType, id = GetActionInfo(button.action)
                             if actionType == "spell" and id == spellID then
-                                local hotkey = button.keyBoundTarget or button.bindName
-                                if hotkey then
-                                    hotkey = GetBindingKey(hotkey)
-                                    if hotkey then
-                                        hotkey = hotkey:gsub("SHIFT%-", "S")
-                                        hotkey = hotkey:gsub("CTRL%-", "C")
-                                        hotkey = hotkey:gsub("ALT%-", "A")
-                                        -- Cache it
+                                local bindTarget = button.keyBoundTarget or button.bindName
+                                if bindTarget then
+                                    local rawKey = GetBindingKey(bindTarget)
+                                    if rawKey then
+                                        local hotkey = CDM.UI:FormatHotkey(rawKey)
                                         self.cache[cacheKey] = hotkey
-                                        if CDM.debug then
-                                            CDM:Print(string.format("  ✓ Found in ElvUI: %s", hotkey))
-                                        end
                                         return hotkey
                                     end
                                 end
@@ -269,13 +195,11 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         end
     end
     
-    -- Not found anywhere
     return nil
 end
 
 --[[
-    Get hotkey for an item ID
-    Returns: hotkey string or nil
+    Get hotkey for an item ID. Cache-only (no JIT for items).
 ]]--
 function Hotkeys:GetHotkeyForItem(itemID)
     if not itemID then return nil end
@@ -283,23 +207,20 @@ function Hotkeys:GetHotkeyForItem(itemID)
 end
 
 --[[
-    Force a rescan of action bars
-    Called when action bars change
+    Force rescan of action bars and update all displays.
 ]]--
 function Hotkeys:Update()
     self:ScanActionBars()
 end
 
--- Event handling for keeping hotkeys updated
-local frame = CreateFrame("Frame")
-frame:RegisterEvent("PLAYER_ENTERING_WORLD")
-frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-frame:RegisterEvent("UPDATE_BINDINGS")
-frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
-frame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+--============================================================================
+-- EVENT HANDLING
+--============================================================================
 
--- Track the last action bar state to detect actual changes
+local lastRescanTime = 0
+local RESCAN_THROTTLE = 2
 local lastActionBarState = {}
+
 local function GetActionBarState()
     local state = {}
     for slot = 1, 120 do
@@ -311,207 +232,151 @@ local function GetActionBarState()
     return state
 end
 
--- Throttle rescanning
-local lastRescanTime = 0
-local RESCAN_THROTTLE = 2  -- At most once per 2 seconds
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+eventFrame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+eventFrame:RegisterEvent("UPDATE_BINDINGS")
+eventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+eventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
 
-frame:SetScript("OnEvent", function(self, event, ...)
+eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
-        -- Initial scan when player loads in
-        if CDM.debug then
-            CDM:Print("Performing initial action bar scan...")
-        end
-        C_Timer.After(2, function()  -- Small delay to let everything load
+        C_Timer.After(2, function()
             Hotkeys:ScanActionBars()
             lastActionBarState = GetActionBarState()
         end)
+        
     elseif event == "ACTIONBAR_SLOT_CHANGED" then
         local slot = ...
-        
-        -- Throttle to prevent spam
         local now = GetTime()
-        if now - lastRescanTime < RESCAN_THROTTLE then
-            return
-        end
+        if now - lastRescanTime < RESCAN_THROTTLE then return end
         
-        -- Check if this is an actual change (ability moved) vs just a state update
         local actionType, id = GetActionInfo(slot)
         local newState = actionType and id and (actionType .. ":" .. id) or nil
-        local oldState = lastActionBarState[slot]
-        
-        if newState ~= oldState then
-            -- Actual change detected - do a FULL rescan to catch everything
-            if CDM.debug then
-                CDM:Print(string.format("Action bar slot %d changed: %s -> %s", 
-                    slot, 
-                    oldState or "empty", 
-                    newState or "empty"))
-                CDM:Print("Performing full action bar rescan...")
-            end
+        if newState ~= lastActionBarState[slot] then
             lastRescanTime = now
-            
-            -- Full rescan
             Hotkeys:ScanActionBars()
+            lastActionBarState = GetActionBarState()
             
-            -- Update cooldown manager frames after a small delay
             C_Timer.After(0.5, function()
                 if CDM.BlizzHooks then
-                    if CDM.debug then
-                        CDM:Print("Updating cooldown manager frames...")
-                    end
                     CDM.BlizzHooks:UpdateAllVisibleFrames()
                 end
             end)
-            
-            -- Update state
-            lastActionBarState = GetActionBarState()
         end
+        
     elseif event == "UPDATE_BINDINGS" then
-        -- Keybindings changed - always rescan
-        if CDM.debug then
-            CDM:Print("Keybindings updated, rescanning...")
-        end
         Hotkeys:Update()
-    elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "ACTIVE_TALENT_GROUP_CHANGED" then
-        -- Spec or talent changed, abilities might be different
-        if CDM.debug then
-            CDM:Print("Spec/talents changed, rescanning...")
-        end
-        C_Timer.After(1, function()  -- Small delay to let spec change complete
+        
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED"
+        or event == "ACTIVE_TALENT_GROUP_CHANGED" then
+        C_Timer.After(1, function()
             Hotkeys:Update()
             lastActionBarState = GetActionBarState()
         end)
     end
 end)
 
--- Expose a manual update command for testing
+--============================================================================
+-- SLASH COMMANDS (debug/diagnostics)
+--============================================================================
+
 SLASH_CDMHOTKEYS1 = "/cdthotkeys"
-SlashCmdList["CDMHOTKEYS"] = function(msg)
-    CDM:Print("Manually rescanning action bars...")
+SlashCmdList["CDMHOTKEYS"] = function()
+    CDM:Msg("Rescanning action bars...")
     Hotkeys:ScanActionBars()
-    
-    -- Also update cooldown manager frames
     if CDM.BlizzHooks then
         CDM.BlizzHooks:UpdateAllVisibleFrames()
     end
-    
-    -- Print some examples if debug is on
     if CDM.debug then
-        CDM:Print("Sample cache entries:")
+        CDM:Print("Sample cache:")
         local count = 0
         for key, hotkey in pairs(Hotkeys.cache) do
-            CDM:Print(" ", key, "=>", hotkey)
+            CDM:Print("  ", key, "=>", hotkey)
             count = count + 1
-            if count >= 10 then break end  -- Show first 10
+            if count >= 10 then break end
         end
     end
 end
 
--- Command to dump all spell IDs for comparison
 SLASH_CDMDUMP1 = "/cdmxdump"
-SlashCmdList["CDMDUMP"] = function(msg)
-    print("=== COOLDOWN TRACKER SPELL ID DUMP ===")
+SlashCmdList["CDMDUMP"] = function()
+    print("=== CDMx SPELL ID DUMP ===")
     print("")
-    print("--- Action Bar Spell IDs ---")
+    print("--- Action Bar ---")
     for slot = 1, 120 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" then
-            local spellName = C_Spell.GetSpellName(id)
-            print(string.format("Slot %d: spell:%d (%s)", slot, id, spellName or "Unknown"))
+            print(string.format("  Slot %d: spell:%d (%s)", slot, id, C_Spell.GetSpellName(id) or "?"))
         elseif actionType == "item" then
-            local itemName = C_Item.GetItemNameByID(id)
-            print(string.format("Slot %d: item:%d (%s)", slot, id, itemName or "Unknown"))
+            print(string.format("  Slot %d: item:%d (%s)", slot, id, C_Item.GetItemNameByID(id) or "?"))
         end
     end
-    
     print("")
-    print("--- Cooldown Manager Spell IDs ---")
-    
-    -- Check Essential viewer
+    print("--- Cooldown Manager ---")
     if EssentialCooldownViewer then
         for _, child in ipairs({EssentialCooldownViewer:GetChildren()}) do
-            local spellID = child.rangeCheckSpellID or child.cooldownID
-            if spellID then
-                local spellName = C_Spell.GetSpellName(spellID)
-                print(string.format("Essential: spell:%d (%s)", spellID, spellName or "Unknown"))
+            local sid = child.rangeCheckSpellID or child.cooldownID
+            if sid then
+                print(string.format("  Essential: spell:%d (%s)", sid, C_Spell.GetSpellName(sid) or "?"))
             end
         end
     end
-    
-    -- Check Utility viewer
     if UtilityCooldownViewer then
         for _, child in ipairs({UtilityCooldownViewer:GetChildren()}) do
-            local spellID = child.rangeCheckSpellID or child.cooldownID
-            if spellID then
-                local spellName = C_Spell.GetSpellName(spellID)
-                print(string.format("Utility: spell:%d (%s)", spellID, spellName or "Unknown"))
+            local sid = child.rangeCheckSpellID or child.cooldownID
+            if sid then
+                print(string.format("  Utility: spell:%d (%s)", sid, C_Spell.GetSpellName(sid) or "?"))
             end
         end
     end
-    
-    print("")
-    print("=== END DUMP ===")
-    print("Look for spells that appear in Cooldown Manager but NOT in Action Bars (or with different IDs)")
+    print("=== END ===")
 end
 
 SLASH_CDMMAP1 = "/cdtmap"
 SlashCmdList["CDMMAP"] = function(msg)
     local args = {}
-    for word in msg:gmatch("%S+") do
-        table.insert(args, word)
-    end
+    for word in msg:gmatch("%S+") do table.insert(args, word) end
     
     if #args == 0 then
-        print("CDMx: Current spell ID mappings:")
+        print("CDMx spell ID mappings:")
         for cdmID, barID in pairs(Hotkeys.spellIDMap) do
             print(string.format("  %d -> %d", cdmID, barID))
         end
-        print("CDMx: Usage: /cdtmap <cooldownManagerSpellID> <actionBarSpellID>")
+        print("Usage: /cdtmap <cooldownManagerID> <actionBarID>")
         return
     end
     
-    local cdmID = tonumber(args[1])
-    local barID = tonumber(args[2])
-    
+    local cdmID, barID = tonumber(args[1]), tonumber(args[2])
     if cdmID and barID then
         Hotkeys.spellIDMap[cdmID] = barID
-        print(string.format("CDMx: Added mapping: %d -> %d", cdmID, barID))
-        print("CDMx: Run /cdtupdate to apply")
+        CDM:Msg(string.format("Mapped: %d -> %d (run /cdtupdate to apply)", cdmID, barID))
     else
-        print("CDMx: Usage: /cdtmap <cooldownManagerSpellID> <actionBarSpellID>")
+        CDM:Msg("Usage: /cdtmap <cooldownManagerID> <actionBarID>")
     end
 end
+
 SLASH_CDMSLOT1 = "/cdmxslot"
 SlashCmdList["CDMSLOT"] = function(msg)
     local slot = tonumber(msg)
     if not slot then
-        CDM:Print("Usage: /cdmxslot <number>  (e.g., /cdmxslot 4)")
+        CDM:Msg("Usage: /cdmxslot <number>")
         return
     end
     
-    CDM:Print(string.format("=== Action Slot %d ===", slot))
+    CDM:Msg(string.format("=== Slot %d ===", slot))
     local actionType, id = GetActionInfo(slot)
-    
     if actionType then
-        CDM:Print("Type:", actionType)
-        CDM:Print("ID:", id)
-        
+        CDM:Msg("Type:", actionType, "ID:", id)
         if actionType == "spell" then
-            local spellName = C_Spell.GetSpellName(id)
-            CDM:Print("Spell Name:", spellName or "Unknown")
+            CDM:Msg("Name:", C_Spell.GetSpellName(id) or "?")
         elseif actionType == "item" then
-            local itemName = C_Item.GetItemNameByID(id)
-            CDM:Print("Item Name:", itemName or "Unknown")
+            CDM:Msg("Name:", C_Item.GetItemNameByID(id) or "?")
         end
-        
-        local hotkey = Hotkeys:GetHotkeyForSlot(slot)
-        CDM:Print("Hotkey:", hotkey or "None")
-        
-        -- Check if it's in cache
+        CDM:Msg("Hotkey:", Hotkeys:GetHotkeyForSlot(slot) or "None")
         local cacheKey = actionType == "spell" and ("spell:" .. id) or ("item:" .. id)
-        local cached = Hotkeys.cache[cacheKey]
-        CDM:Print("In cache:", cached or "NO")
+        CDM:Msg("Cached:", Hotkeys.cache[cacheKey] or "NO")
     else
-        CDM:Print("Empty slot")
+        CDM:Msg("Empty slot")
     end
 end

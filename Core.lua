@@ -1,100 +1,131 @@
 --[[
-    Cooldown Tracker - Core.lua
+    CDMx - Core.lua
     Handles addon initialization, namespace setup, and saved variables
     
     Author: Juicetheforce (with Claude assistance)
-    Target: WoW 12.0.x (Midnight pre-patch / Midnight)
+    Target: WoW 12.0.x (Midnight)
 ]]--
 
--- Create addon namespace
 local ADDON_NAME, CDM = ...
 
 -- Version info
-CDM.version = "0.1.0-alpha"
-CDM.debug = false  -- Show important debug info
-CDM.verbose = false  -- Show ALL debug info (very spammy)
+CDM.version = "1.0.0"
+CDM.debug = false
+CDM.verbose = false
 
--- Initialize saved variables structure
+--============================================================================
+-- DEFAULT SETTINGS
+--============================================================================
+
 local defaults = {
     enabled = true,
     showHotkeys = true,
-    debug = false,  -- Persists across sessions when toggled
+    debug = false,
     
     -- Hotkey display settings
-    hotkeyFontSize = 16,  -- Bigger default font (for Essential cooldowns)
-    utilityFontSize = 12, -- Smaller font for Utility cooldowns
-    hotkeyFont = "Fonts\\FRIZQT__.TTF",  -- Default WoW font
-    hotkeyOffsetX = 2,  -- Offset from anchor point (positive = away from edge)
-    hotkeyOffsetY = -2,  -- Negative Y = down from top
-    hotkeyAnchor = "TOPLEFT",  -- Where to anchor
-    hotkeyOutline = "OUTLINE",  -- OUTLINE, THICKOUTLINE, or NONE
-    procGlow = true,  -- Show proc glow when abilities come off cooldown
+    hotkeyFontSize = 16,      -- Essential cooldowns (large icons)
+    utilityFontSize = 12,     -- Utility cooldowns (small icons)
+    hotkeyFont = "Fonts\\FRIZQT__.TTF",
+    hotkeyOffsetX = 2,
+    hotkeyOffsetY = -2,
+    hotkeyAnchor = "TOPLEFT",
+    hotkeyOutline = "OUTLINE",
+    procGlow = true,
     
-    -- Cooldown Manager styling
+    -- Cooldown Manager styling (Blizzard Essential/Utility bars)
     cooldownManager = {
-        squareIcons = false,  -- true = square, false = rounded (default Blizzard style)
-        showBorder = true,    -- Show black border around icons
+        squareIcons = false,
+        showBorder = true,
     },
     
     -- Trinket bar settings
     trinketBar = {
         enabled = true,
-        locked = false,  -- false = draggable, true = locked in place
-        horizontal = true,  -- true = horizontal row, false = vertical column
+        locked = false,
+        horizontal = true,
         iconSize = 40,
-        padding = 5,  -- Space between icons
+        padding = 5,
         position = { point = "CENTER", x = 0, y = 0 },
-        squareIcons = true,  -- true = square (ElvUI style), false = rounded (Blizzard style)
-        showBorder = true,  -- Show black border around icons
-        hotkeyFontSize = 12,  -- Font size for hotkeys on trinket icons
-        visibility = "always",  -- "always", "combat", "noCombat"
+        squareIcons = true,
+        showBorder = true,
+        hotkeyFontSize = 12,
+        visibility = "always",
     },
     
-    -- Custom bars settings (Phase 2+)
-    customBars = {
-        -- Empty by default - users create their own
-    },
+    -- Custom bars (user-created)
+    customBars = {},
     
-    -- Custom bars style (applies to all custom bars)
+    -- Global style for custom bars
     customBarsStyle = {
-        squareIcons = true,   -- Match ElvUI style by default
-        showBorder = true,    -- Show black border
+        squareIcons = true,
+        showBorder = true,
     },
 }
 
--- Debug print function
+--============================================================================
+-- UTILITY FUNCTIONS
+--============================================================================
+
+-- Debug print (only when debug mode is on)
 function CDM:Print(...)
     if self.debug then
         print("|cff33ff99CDMx:|r", ...)
     end
 end
 
--- Initialize function
-function CDM:Initialize()
-    -- Load or create saved variables
-    if not CDMxDB then
-        CDMxDB = defaults
-        self:Print("Initialized with default settings")
-    else
-        -- Merge defaults with saved settings
-        for k, v in pairs(defaults) do
-            if CDMxDB[k] == nil then
-                CDMxDB[k] = v
+-- Always print (for user-facing messages regardless of debug)
+function CDM:Msg(...)
+    print("|cff33ff99CDMx:|r", ...)
+end
+
+--[[
+    Deep merge defaults into saved variables.
+    Preserves existing user values, adds missing defaults,
+    and recurses into nested tables.
+]]--
+local function DeepMerge(saved, default)
+    for k, v in pairs(default) do
+        if saved[k] == nil then
+            -- Missing key, add the default
+            if type(v) == "table" then
+                saved[k] = CopyTable(v)
+            else
+                saved[k] = v
+            end
+        elseif type(v) == "table" and type(saved[k]) == "table" then
+            -- Both are tables, recurse (but skip customBars - user data)
+            if k ~= "customBars" then
+                DeepMerge(saved[k], v)
             end
         end
+    end
+end
+
+--============================================================================
+-- INITIALIZATION
+--============================================================================
+
+function CDM:Initialize()
+    if not CDMxDB then
+        CDMxDB = CopyTable(defaults)
+        self:Print("Initialized with default settings")
+    else
+        DeepMerge(CDMxDB, defaults)
         self:Print("Loaded saved settings")
     end
     
-    -- Store reference to DB
     self.db = CDMxDB
-    
-    -- Initialize runtime debug flag from saved setting
     self.debug = self.db.debug or false
+    
+    -- Initialize shared UI module
+    if self.UI then
+        self.UI:InitMasque()
+    end
     
     self:Print("Version", self.version, "initialized")
 end
 
--- Create event frame for addon loading
+-- Event handling
 local frame = CreateFrame("Frame")
 frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
@@ -104,348 +135,310 @@ frame:SetScript("OnEvent", function(self, event, arg1)
         CDM:Initialize()
     elseif event == "PLAYER_LOGIN" then
         CDM:Print("Player logged in - ready to track cooldowns!")
-        
-        -- Phase 1: Just confirm we can see the cooldown manager
         if EditModeManagerFrame then
-            CDM:Print("Edit Mode detected - Cooldown Manager should be available")
-        else
-            CDM:Print("WARNING: Edit Mode not found - unexpected for 12.0")
+            CDM:Print("Edit Mode detected")
         end
     end
 end)
 
--- Slash commands for testing
+--============================================================================
+-- SLASH COMMANDS
+--============================================================================
+
 SLASH_CDMX1 = "/cdmx"
 SLASH_CDMX2 = "/cdm"
 
 SlashCmdList["CDMX"] = function(msg)
-    -- Parse arguments BEFORE lowercasing to preserve bar names
+    -- Parse args preserving case for bar names
     local args = {}
     for word in msg:gmatch("%S+") do
         table.insert(args, word)
     end
-    
-    -- Only lowercase the first argument (the command)
     local cmd = string.lower(args[1] or "")
     
     if cmd == "" or cmd == "help" then
-        print("|cff33ff99Cooldown Tracker Commands:|r")
-        print("/cdmx toggle - Enable/disable the addon")
-        print("/cdmx debug - Toggle debug output")
-        print("/cdmx verbose - Toggle verbose debug (very spammy)")
-        print("/cdmx version - Show version info")
-        print("/cdmx status - Show current status")
-        print("|cff33ff99Hotkey Display:|r")
-        print("/cdmx fontsize <number> - Set hotkey font size (default 16)")
-        print("/cdmx position <anchor> - Set hotkey position: TOPRIGHT, TOPLEFT, CENTER, etc.")
-        print("/cdmx offset <x> <y> - Fine-tune position (e.g., /cdmx offset -5 -5)")
-        print("/cdmx outline <type> - Set outline: OUTLINE, THICKOUTLINE, NONE")
-        print("/cdmx procglow - Toggle proc glow when abilities are ready")
-        print("|cff33ff99Cooldown Manager Styling:|r")
-        print("/cdmx cdmsquare - Toggle square vs rounded icons")
-        print("/cdmx cdmborder - Toggle black borders on/off")
+        print("|cff33ff99CDMx Commands:|r")
+        print("  /cdmx config - Open settings panel")
+        print("  /cdmx toggle - Enable/disable addon")
+        print("  /cdmx debug - Toggle debug output")
+        print("  /cdmx verbose - Toggle verbose debug")
+        print("  /cdmx version - Show version info")
+        print("  /cdmx status - Show current status")
+        print("  /cdmx reload - Reload UI")
+        print("|cff33ff99Hotkeys:|r")
+        print("  /cdmx fontsize <8-32> - Essential font size")
+        print("  /cdmx position <anchor> - Hotkey position")
+        print("  /cdmx offset <x> <y> - Fine-tune position")
+        print("  /cdmx outline <type> - OUTLINE, THICKOUTLINE, NONE")
+        print("  /cdmx procglow - Toggle proc glow")
+        print("|cff33ff99Cooldown Manager:|r")
+        print("  /cdmx cdmsquare - Toggle square icons")
+        print("  /cdmx cdmborder - Toggle borders")
         print("|cff33ff99Trinket Bar:|r")
-        print("/cdmx trinkets - Toggle trinket bar on/off")
-        print("/cdmx lock - Lock/unlock trinket bar (prevent dragging)")
-        print("/cdmx trinketsize <number> - Set trinket icon size (default 40)")
-        print("/cdmx trinketpadding <number> - Set spacing between icons (default 5)")
-        print("/cdmx trinketlayout - Toggle horizontal/vertical layout")
-        print("/cdmx trinketsquare - Toggle square vs rounded icons")
-        print("/cdmx trinketborder - Toggle black borders on/off")
-        print("/cdmx reload - Reload UI to apply changes")
-        print("|cff33ff99Interface:|r")
-        print("/cdmx config - Open settings panel")
+        print("  /cdmx trinkets - Toggle trinket bar")
+        print("  /cdmx trinketsize <20-80> - Icon size")
+        print("  /cdmx trinketpadding <0-20> - Spacing")
+        print("  /cdmx trinketlayout - Toggle H/V")
         print("|cff33ff99Custom Bars:|r")
-        print("/cdmx bar <name> - Manage a custom bar")
-        print("  enable/disable - Toggle bar")
-        print("  lock/unlock - Lock/unlock position")
-        print("  layout - Toggle horizontal/vertical")
-        print("  delete - Remove the bar")
+        print("  /cdmx bar create <name>")
+        print("  /cdmx bar list")
+        print("  /cdmx bar <name> [enable|disable|layout|delete]")
+        print("  /cdmx bar <name> [slots|size|font] <value>")
+        
     elseif cmd == "bar" then
-        local barName = args[2]  -- Preserve case!
-        local subCmd = string.lower(args[3] or "")  -- Lowercase command only
+        CDM:HandleBarCommand(args)
         
-        if not barName or barName == "" then
-            print("|cff33ff99CDMx:|r Usage: /cdmx bar <barname> <command>")
-            print("|cff33ff99CDMx:|r Commands: create, list, enable, disable, lock, unlock, layout, delete, config")
-            return
-        end
-        
-        -- Create a new bar
-        if barName == "create" then
-            local newBarName = args[3]
-            if not newBarName or newBarName == "" then
-                print("|cff33ff99CDMx:|r Usage: /cdmx bar create <name>")
-                return
-            end
-            
-            if CDM.db.customBars[newBarName] then
-                print("|cff33ff99CDMx:|r Bar '" .. newBarName .. "' already exists!")
-                return
-            end
-            
-            CDM.db.customBars[newBarName] = {
-                enabled = true,
-                locked = false,
-                horizontal = true,
-                iconSize = 40,
-                padding = 5,
-                position = { point = "CENTER", x = 0, y = 0 },
-                squareIcons = false,
-                showBorder = true,
-                hotkeyFontSize = 12,
-                visibility = "always",
-                items = {},
-                numSlots = 5,
-            }
-            print("|cff33ff99CDMx:|r Created custom bar:", newBarName)
-            print("|cff33ff99CDMx:|r Type /reload to see your new bar")
-            print("|cff33ff99CDMx:|r Use /cdmx bar", newBarName, "config to configure it")
-            return
-        end
-        
-        -- List all bars
-        if barName == "list" then
-            print("|cff33ff99CDMx:|r Custom bars:")
-            for name, _ in pairs(CDM.db.customBars or {}) do
-                print("  - '" .. name .. "'")
-            end
-            return
-        end
-        
-        if not CDM.db.customBars[barName] then
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' not found")
-            print("|cff33ff99CDMx:|r Use '/cdmx bar list' to see all bars")
-            return
-        end
-        
-        if subCmd == "enable" then
-            CDM.db.customBars[barName].enabled = true
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' enabled")
-            if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
-        elseif subCmd == "disable" then
-            CDM.db.customBars[barName].enabled = false
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' disabled")
-            if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
-        elseif subCmd == "lock" then
-            CDM.db.customBars[barName].locked = true
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' locked")
-            if CDM.CustomBars then CDM.CustomBars:UpdateLockState(barName) end
-        elseif subCmd == "unlock" then
-            CDM.db.customBars[barName].locked = false
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' unlocked")
-            if CDM.CustomBars then CDM.CustomBars:UpdateLockState(barName) end
-        elseif subCmd == "layout" then
-            CDM.db.customBars[barName].horizontal = not CDM.db.customBars[barName].horizontal
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' layout:", CDM.db.customBars[barName].horizontal and "horizontal" or "vertical")
-            if CDM.CustomBars then 
-                CDM.CustomBars:UpdateLayout(barName)
-                CDM.CustomBars:UpdateBar(barName)
-            end
-        elseif subCmd == "delete" then
-            CDM.db.customBars[barName] = nil
-            print("|cff33ff99CDMx:|r Bar '" .. barName .. "' deleted - /reload to remove")
-        elseif subCmd == "config" then
-            print("|cff33ff99CDMx:|r Configure bar: " .. barName)
-            print("|cff33ff99CDMx:|r Commands:")
-            print("  /cdmx bar " .. barName .. " size <20-80> - Icon size")
-            print("  /cdmx bar " .. barName .. " font <8-24> - Hotkey font size")
-            print("  /cdmx bar " .. barName .. " slots <1-12> - Number of slots")
-        elseif subCmd == "size" then
-            local value = tonumber(args[4])
-            if value and value >= 20 and value <= 80 then
-                CDM.db.customBars[barName].iconSize = value
-                print("|cff33ff99CDMx:|r Bar '" .. barName .. "' icon size set to " .. value)
-                if CDM.CustomBars then
-                    CDM.CustomBars:UpdateLayout(barName)
-                    CDM.CustomBars:UpdateBar(barName)
-                end
-            else
-                print("|cff33ff99CDMx:|r Invalid size. Use 20-80")
-            end
-        elseif subCmd == "font" then
-            local value = tonumber(args[4])
-            if value and value >= 8 and value <= 24 then
-                CDM.db.customBars[barName].hotkeyFontSize = value
-                print("|cff33ff99CDMx:|r Bar '" .. barName .. "' font size set to " .. value)
-                if CDM.CustomBars then
-                    CDM.CustomBars:UpdateBar(barName)
-                end
-            else
-                print("|cff33ff99CDMx:|r Invalid font size. Use 8-24")
-            end
-        elseif subCmd == "slots" then
-            local value = tonumber(args[4])
-            if value and value >= 1 and value <= 12 then
-                CDM.db.customBars[barName].numSlots = value
-                print("|cff33ff99CDMx:|r Bar '" .. barName .. "' slots set to " .. value)
-                print("|cff33ff99CDMx:|r /reload to apply")
-            else
-                print("|cff33ff99CDMx:|r Invalid slot count. Use 1-12")
-            end
-        else
-            print("|cff33ff99CDMx:|r Unknown command. Use: enable, disable, lock, unlock, layout, delete, config, size, font, slots")
-        end
     elseif cmd == "nukebars" then
         CDM.db.customBars = {}
-        print("|cff33ff99CDMx:|r Deleted ALL custom bars - /reload to apply")
+        CDM:Msg("Deleted ALL custom bars - /reload to apply")
+        
     elseif cmd == "config" then
-        -- Open settings panel
-        if SettingsPanel then
+        if CDM.Config and CDM.Config.Open then
+            CDM.Config:Open()
+        elseif SettingsPanel then
             SettingsPanel:Open()
-            CDM:Print("Settings panel opened - look for 'CDMx' under AddOns")
-        else
-            CDM:Print("Open ESC → Interface Options → AddOns → CDMx")
+            CDM:Msg("Look for 'CDMx' under AddOns")
         end
+        
     elseif cmd == "toggle" then
         CDM.db.enabled = not CDM.db.enabled
-        CDM:Print("Addon", CDM.db.enabled and "enabled" or "disabled")
+        CDM:Msg("Addon", CDM.db.enabled and "enabled" or "disabled")
+        
     elseif cmd == "debug" then
         CDM.db.debug = not CDM.db.debug
-        CDM.debug = CDM.db.debug  -- Update runtime variable
-        CDM:Print("Debug mode", CDM.debug and "enabled" or "disabled")
+        CDM.debug = CDM.db.debug
+        CDM:Msg("Debug mode", CDM.debug and "enabled" or "disabled")
+        
     elseif cmd == "verbose" then
         CDM.verbose = not CDM.verbose
-        CDM:Print("Verbose mode", CDM.verbose and "enabled (VERY SPAMMY)" or "disabled")
+        CDM:Msg("Verbose mode", CDM.verbose and "enabled" or "disabled")
+        
     elseif cmd == "version" then
-        CDM:Print("Version:", CDM.version)
+        CDM:Msg("Version:", CDM.version)
+        
     elseif cmd == "status" then
-        CDM:Print("Status:")
-        CDM:Print("  Enabled:", CDM.db.enabled)
-        CDM:Print("  Debug:", CDM.debug)
-        CDM:Print("  Show Hotkeys:", CDM.db.showHotkeys)
-        CDM:Print("  Font Size:", CDM.db.hotkeyFontSize)
-        CDM:Print("  Position:", CDM.db.hotkeyAnchor)
-        CDM:Print("  Offset: X=" .. CDM.db.hotkeyOffsetX .. ", Y=" .. CDM.db.hotkeyOffsetY)
-        CDM:Print("  Outline:", CDM.db.hotkeyOutline)
+        CDM:Msg("Status:")
+        CDM:Msg("  Enabled:", CDM.db.enabled)
+        CDM:Msg("  Debug:", CDM.debug)
+        CDM:Msg("  Hotkeys:", CDM.db.showHotkeys)
+        CDM:Msg("  Font Size:", CDM.db.hotkeyFontSize)
+        CDM:Msg("  Anchor:", CDM.db.hotkeyAnchor)
+        
     elseif cmd == "fontsize" then
         local size = tonumber(args[2])
         if size and size >= 8 and size <= 32 then
             CDM.db.hotkeyFontSize = size
-            CDM:Print("Font size set to:", size)
-            CDM:Print("Type /reload to apply changes")
+            CDM:Msg("Font size set to:", size, "- /reload to apply")
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx fontsize <8-32>")
+            CDM:Msg("Usage: /cdmx fontsize <8-32>")
         end
+        
     elseif cmd == "position" then
         local pos = args[2] and string.upper(args[2])
-        local validPositions = {
-            TOPRIGHT = true, TOPLEFT = true, TOP = true,
-            BOTTOMRIGHT = true, BOTTOMLEFT = true, BOTTOM = true,
-            CENTER = true, LEFT = true, RIGHT = true
-        }
-        if pos and validPositions[pos] then
+        local valid = { TOPRIGHT=1, TOPLEFT=1, TOP=1, BOTTOMRIGHT=1,
+                        BOTTOMLEFT=1, BOTTOM=1, CENTER=1, LEFT=1, RIGHT=1 }
+        if pos and valid[pos] then
             CDM.db.hotkeyAnchor = pos
-            CDM:Print("Position set to:", pos)
-            CDM:Print("Type /reload to apply changes")
+            CDM:Msg("Position set to:", pos, "- /reload to apply")
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx position <TOPRIGHT|TOPLEFT|CENTER|etc>")
+            CDM:Msg("Usage: /cdmx position <TOPRIGHT|TOPLEFT|CENTER|...>")
         end
+        
     elseif cmd == "outline" then
         local outline = args[2] and string.upper(args[2])
-        local validOutlines = {
-            OUTLINE = true,
-            THICKOUTLINE = true,
-            NONE = true
-        }
-        if outline and validOutlines[outline] then
+        local valid = { OUTLINE=1, THICKOUTLINE=1, NONE=1 }
+        if outline and valid[outline] then
             CDM.db.hotkeyOutline = outline == "NONE" and "" or outline
-            CDM:Print("Outline set to:", outline)
-            CDM:Print("Type /reload to apply changes")
+            CDM:Msg("Outline set to:", outline, "- /reload to apply")
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx outline <OUTLINE|THICKOUTLINE|NONE>")
+            CDM:Msg("Usage: /cdmx outline <OUTLINE|THICKOUTLINE|NONE>")
         end
+        
     elseif cmd == "offset" then
-        local x = tonumber(args[2])
-        local y = tonumber(args[3])
+        local x, y = tonumber(args[2]), tonumber(args[3])
         if x and y then
             CDM.db.hotkeyOffsetX = x
             CDM.db.hotkeyOffsetY = y
-            CDM:Print(string.format("Offset set to: X=%d, Y=%d", x, y))
-            CDM:Print("Type /reload to apply changes")
+            CDM:Msg(string.format("Offset: X=%d, Y=%d - /reload to apply", x, y))
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx offset <x> <y>")
-            CDM:Print("Example: /cdmx offset -8 -8")
+            CDM:Msg("Usage: /cdmx offset <x> <y>")
         end
+        
     elseif cmd == "reload" then
         ReloadUI()
+        
     elseif cmd == "trinkets" then
         CDM.db.trinketBar.enabled = not CDM.db.trinketBar.enabled
-        CDM:Print("Trinket bar", CDM.db.trinketBar.enabled and "enabled" or "disabled")
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
+        CDM:Msg("Trinket bar", CDM.db.trinketBar.enabled and "enabled" or "disabled")
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+        
     elseif cmd == "lock" then
-        CDM.db.trinketBar.locked = not CDM.db.trinketBar.locked
-        CDM:Print("Trinket bar", CDM.db.trinketBar.locked and "locked" or "unlocked")
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
+        self:Msg("Use Edit Mode to reposition bars (ESC > Edit Mode)")
+        
     elseif cmd == "trinketsize" then
         local size = tonumber(args[2])
         if size and size >= 20 and size <= 80 then
             CDM.db.trinketBar.iconSize = size
-            CDM:Print("Trinket icon size set to:", size)
-            if CDM.TrinketBar then
-                CDM.TrinketBar:Update()
-            end
+            CDM:Msg("Trinket icon size:", size)
+            if CDM.TrinketBar then CDM.TrinketBar:Update() end
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx trinketsize <20-80>")
+            CDM:Msg("Usage: /cdmx trinketsize <20-80>")
         end
+        
     elseif cmd == "trinketpadding" then
-        local padding = tonumber(args[2])
-        if padding and padding >= 0 and padding <= 20 then
-            CDM.db.trinketBar.padding = padding
-            CDM:Print("Trinket padding set to:", padding)
-            if CDM.TrinketBar then
-                CDM.TrinketBar:Update()
-            end
+        local p = tonumber(args[2])
+        if p and p >= 0 and p <= 20 then
+            CDM.db.trinketBar.padding = p
+            CDM:Msg("Trinket padding:", p)
+            if CDM.TrinketBar then CDM.TrinketBar:Update() end
         else
-            print("|cff33ff99CDMx:|r Usage: /cdmx trinketpadding <0-20>")
+            CDM:Msg("Usage: /cdmx trinketpadding <0-20>")
         end
+        
     elseif cmd == "trinketlayout" then
         CDM.db.trinketBar.horizontal = not CDM.db.trinketBar.horizontal
-        CDM:Print("Trinket bar layout:", CDM.db.trinketBar.horizontal and "horizontal" or "vertical")
-        if CDM.TrinketBar then
-            CDM.TrinketBar:Update()
-        end
+        CDM:Msg("Trinket layout:", CDM.db.trinketBar.horizontal and "horizontal" or "vertical")
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+        
     elseif cmd == "trinketsquare" then
         CDM.db.trinketBar.squareIcons = not CDM.db.trinketBar.squareIcons
-        CDM:Print("Square icons:", CDM.db.trinketBar.squareIcons and "enabled" or "disabled")
-        CDM:Print("Type /reload to apply changes")
+        CDM:Msg("Square icons:", CDM.db.trinketBar.squareIcons and "on" or "off", "- /reload to apply")
+        
     elseif cmd == "trinketborder" then
         CDM.db.trinketBar.showBorder = not CDM.db.trinketBar.showBorder
-        CDM:Print("Icon borders:", CDM.db.trinketBar.showBorder and "enabled" or "disabled")
-        CDM:Print("Type /reload to apply changes")
+        CDM:Msg("Borders:", CDM.db.trinketBar.showBorder and "on" or "off", "- /reload to apply")
+        
     elseif cmd == "procglow" then
         CDM.db.procGlow = not CDM.db.procGlow
-        CDM:Print("Proc glow", CDM.db.procGlow and "enabled" or "disabled")
+        CDM:Msg("Proc glow", CDM.db.procGlow and "enabled" or "disabled")
+        
     elseif cmd == "cdmsquare" then
         CDM.db.cooldownManager.squareIcons = not CDM.db.cooldownManager.squareIcons
-        CDM:Print("Cooldown Manager square icons:", CDM.db.cooldownManager.squareIcons and "enabled" or "disabled")
-        CDM:Print("Type /reload to apply changes")
+        CDM:Msg("CM square icons:", CDM.db.cooldownManager.squareIcons and "on" or "off", "- /reload to apply")
+        
     elseif cmd == "cdmborder" then
         CDM.db.cooldownManager.showBorder = not CDM.db.cooldownManager.showBorder
-        CDM:Print("Cooldown Manager borders:", CDM.db.cooldownManager.showBorder and "enabled" or "disabled")
-        CDM:Print("Type /reload to apply changes")
+        CDM:Msg("CM borders:", CDM.db.cooldownManager.showBorder and "on" or "off", "- /reload to apply")
+        
     else
-        CDM:Print("Unknown command. Type /cdmx help for commands.")
+        CDM:Msg("Unknown command. Type /cdmx help")
     end
 end
 
--- Custom bar item picker dialog
-StaticPopupDialogs["CDMX_PICK_ITEMS"] = {
-    text = "Select items for bar: %s",
-    button1 = "Done",
-    button2 = "Cancel",
-    OnShow = function(self, data)
-        -- TODO: Show checkboxes for available spells/items
-    end,
-    OnAccept = function(self, data)
-        -- TODO: Save selected items
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-}
+--============================================================================
+-- CUSTOM BAR SLASH COMMAND HANDLER
+--============================================================================
+
+function CDM:HandleBarCommand(args)
+    local barName = args[2]
+    local subCmd = string.lower(args[3] or "")
+    
+    if not barName or barName == "" then
+        self:Msg("Usage: /cdmx bar <name> <command>")
+        return
+    end
+    
+    -- Create new bar
+    if barName == "create" then
+        local name = args[3]
+        if not name or name == "" then
+            self:Msg("Usage: /cdmx bar create <name>")
+            return
+        end
+        if self.db.customBars[name] then
+            self:Msg("Bar '" .. name .. "' already exists!")
+            return
+        end
+        self.db.customBars[name] = {
+            enabled = true,
+            locked = false,
+            horizontal = true,
+            iconSize = 40,
+            padding = 5,
+            position = { point = "CENTER", x = 0, y = 0 },
+            squareIcons = self.db.customBarsStyle.squareIcons,
+            showBorder = self.db.customBarsStyle.showBorder,
+            hotkeyFontSize = 12,
+            visibility = "always",
+            items = {},
+            numSlots = 5,
+        }
+        self:Msg("Created bar:", name, "- /reload to see it")
+        return
+    end
+    
+    -- List bars
+    if barName == "list" then
+        self:Msg("Custom bars:")
+        for name, _ in pairs(self.db.customBars or {}) do
+            print("  - '" .. name .. "'")
+        end
+        return
+    end
+    
+    -- Commands that target an existing bar
+    if not self.db.customBars[barName] then
+        self:Msg("Bar '" .. barName .. "' not found. Use '/cdmx bar list'")
+        return
+    end
+    
+    local settings = self.db.customBars[barName]
+    
+    if subCmd == "enable" then
+        settings.enabled = true
+        self:Msg("Bar '" .. barName .. "' enabled")
+        if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
+    elseif subCmd == "disable" then
+        settings.enabled = false
+        self:Msg("Bar '" .. barName .. "' disabled")
+        if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
+    elseif subCmd == "lock" or subCmd == "unlock" then
+        self:Msg("Use Edit Mode to reposition bars (ESC > Edit Mode)")
+    elseif subCmd == "layout" then
+        settings.horizontal = not settings.horizontal
+        self:Msg("Bar '" .. barName .. "':", settings.horizontal and "horizontal" or "vertical")
+        if CDM.CustomBars then
+            CDM.CustomBars:UpdateLayout(barName)
+            CDM.CustomBars:UpdateBar(barName)
+        end
+    elseif subCmd == "delete" then
+        self.db.customBars[barName] = nil
+        self:Msg("Deleted '" .. barName .. "' - /reload to remove")
+    elseif subCmd == "size" then
+        local v = tonumber(args[4])
+        if v and v >= 20 and v <= 80 then
+            settings.iconSize = v
+            self:Msg("Bar '" .. barName .. "' icon size:", v)
+            if CDM.CustomBars then
+                CDM.CustomBars:UpdateLayout(barName)
+                CDM.CustomBars:UpdateBar(barName)
+            end
+        else
+            self:Msg("Invalid size. Use 20-80")
+        end
+    elseif subCmd == "font" then
+        local v = tonumber(args[4])
+        if v and v >= 8 and v <= 24 then
+            settings.hotkeyFontSize = v
+            self:Msg("Bar '" .. barName .. "' font size:", v)
+            if CDM.CustomBars then CDM.CustomBars:UpdateBar(barName) end
+        else
+            self:Msg("Invalid font size. Use 8-24")
+        end
+    elseif subCmd == "slots" then
+        local v = tonumber(args[4])
+        if v and v >= 1 and v <= 12 then
+            settings.numSlots = v
+            self:Msg("Bar '" .. barName .. "' slots:", v, "- /reload to apply")
+        else
+            self:Msg("Invalid slot count. Use 1-12")
+        end
+    elseif subCmd == "config" then
+        self:Msg("Bar: " .. barName)
+        print("  /cdmx bar " .. barName .. " size <20-80>")
+        print("  /cdmx bar " .. barName .. " font <8-24>")
+        print("  /cdmx bar " .. barName .. " slots <1-12>")
+    else
+        self:Msg("Unknown bar command. Use: enable, disable, layout, delete, size, font, slots")
+    end
+end

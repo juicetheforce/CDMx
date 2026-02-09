@@ -2,14 +2,17 @@
 ## Title: CDMx
 ## Notes: Cooldown Manager Extended - Adds hotkeys and custom tracking bars
 ## Author: Juicetheforce (with Claude assistance)
-## Version: 0.1.0-alpha
+## Version: 1.0.0
 ## SavedVariables: CDMxDB
 ## OptionalDeps: Masque
 ## X-Category: Action Bars
-## X-Website: https://github.com/yourusername/CDMx
+## X-Website: https://github.com/juicetheforce/CDMx
 
 # Core initialization
 Core.lua
+
+# Shared UI utilities (buttons, styling, layout)
+UI.lua
 
 # Hotkey detection system
 HotkeyDetection.lua
@@ -17,14 +20,14 @@ HotkeyDetection.lua
 # Hooks for Blizzard's Cooldown Manager
 BlizzardHooks.lua
 
-# Trinket bar system (Phase 2)
+# Trinket bar
 TrinketBar.lua
 
-# Custom bar system (Phase 3)
+# Custom tracking bars
 CustomBars.lua
+
+# Edit Mode integration (movers)
+EditMode.lua
 
 # Configuration UI
 Config.lua
-
-# Custom bar system (Phase 2+)
-# CustomBars.lua
