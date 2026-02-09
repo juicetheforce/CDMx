@@ -25,10 +25,13 @@ Hotkeys.cache = {}
 --============================================================================
 
 -- Cooldown Manager sometimes uses different spell IDs than action bars.
+-- These are for cases where rangeCheckSpellID or GetBaseSpellID() returns
+-- a base spell but the action bar has a talent replacement.
 -- Map: [cooldownManagerID] = actionBarID
 Hotkeys.spellIDMap = {
-    [49411] = 1217605,   -- Void Metamorphosis
-    [90226] = 198793,    -- Vengeful Retreat
+    [49411] = 1217605,   -- Void Metamorphosis (DH)
+    [90226] = 198793,    -- Vengeful Retreat (DH)
+    [85256] = 383328,    -- Templar's Verdict -> Final Verdict (Paladin talent)
 }
 
 -- When looking up spell A, also check spell B (for transformed abilities)
@@ -42,12 +45,47 @@ Hotkeys.alternateSpellIDs = {
 --============================================================================
 
 --[[
+    Map an action bar slot number (1-120) to the correct binding command name.
+    Slots 1-12 are the main bar, 13-24 are bar 2, etc.
+    Each bar range uses a different binding prefix.
+]]--
+local slotBindingMap = {
+    -- Slots 1-12: Main Action Bar
+    { start = 1,   stop = 12,  prefix = "ACTIONBUTTON",          offset = 0  },
+    -- Slots 13-24: Bottom Left (MultiBar3 in binding names)
+    { start = 13,  stop = 24,  prefix = "MULTIACTIONBAR3BUTTON", offset = 12 },
+    -- Slots 25-36: Bottom Right (MultiBar4)
+    { start = 25,  stop = 36,  prefix = "MULTIACTIONBAR4BUTTON", offset = 24 },
+    -- Slots 37-48: Right Bar 2 (MultiBar2)
+    { start = 37,  stop = 48,  prefix = "MULTIACTIONBAR2BUTTON", offset = 36 },
+    -- Slots 49-60: Right Bar 1 (MultiBar1)
+    { start = 49,  stop = 60,  prefix = "MULTIACTIONBAR1BUTTON", offset = 48 },
+    -- Slots 61-72: MultiBar5
+    { start = 61,  stop = 72,  prefix = "MULTIACTIONBAR5BUTTON", offset = 60 },
+    -- Slots 73-84: MultiBar6
+    { start = 73,  stop = 84,  prefix = "MULTIACTIONBAR6BUTTON", offset = 72 },
+    -- Slots 85-96: MultiBar7
+    { start = 85,  stop = 96,  prefix = "MULTIACTIONBAR7BUTTON", offset = 84 },
+    -- Slots 97-108: MultiBar8 (if exists in Midnight)
+    { start = 97,  stop = 108, prefix = "MULTIACTIONBAR8BUTTON", offset = 96 },
+}
+
+--[[
     Get the formatted hotkey text for an action bar slot number.
 ]]--
 function Hotkeys:GetHotkeyForSlot(slot)
-    local key = GetBindingKey("ACTIONBUTTON" .. slot)
-    if not key then return nil end
-    return CDM.UI:FormatHotkey(key)
+    for _, mapping in ipairs(slotBindingMap) do
+        if slot >= mapping.start and slot <= mapping.stop then
+            local buttonIndex = slot - mapping.offset
+            local bindingName = mapping.prefix .. buttonIndex
+            local key = GetBindingKey(bindingName)
+            if key then
+                return CDM.UI:FormatHotkey(key)
+            end
+            return nil
+        end
+    end
+    return nil
 end
 
 --[[
@@ -73,16 +111,16 @@ function Hotkeys:ScanActionBars()
     local found = 0
     
     -- Scan standard action bar slots (covers all bar addons)
+    -- Last-match-wins: if a spell is on multiple slots, the higher
+    -- slot's keybind takes priority.
     for slot = 1, 120 do
         local spellID, itemID = self:GetSpellFromSlot(slot)
         if spellID or itemID then
             local hotkey = self:GetHotkeyForSlot(slot)
             if hotkey then
                 local cacheKey = spellID and ("spell:" .. spellID) or ("item:" .. itemID)
-                if not self.cache[cacheKey] then
-                    self.cache[cacheKey] = hotkey
-                    found = found + 1
-                end
+                self.cache[cacheKey] = hotkey
+                found = found + 1
             end
         end
     end
@@ -127,13 +165,17 @@ end
 --============================================================================
 
 --[[
-    Get hotkey for a spell ID. Checks cache first, then does JIT lookup
-    including spell ID mapping and alternate IDs.
+    Get hotkey for a spell ID. Checks spellIDMap first, then cache,
+    then does JIT lookup with alternate IDs.
+    
+    The spellIDMap is the primary way to handle mismatches between
+    Blizzard's Cooldown Manager spell IDs and action bar spell IDs.
+    Use /cdtmap or /cdmxdump to diagnose and add new mappings.
 ]]--
 function Hotkeys:GetHotkeyForSpell(spellID)
     if not spellID then return nil end
     
-    -- Apply spell ID mapping
+    -- Apply spell ID mapping (CDM ID -> action bar ID)
     local mappedID = self.spellIDMap[spellID]
     if mappedID then
         spellID = mappedID
@@ -145,14 +187,15 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         return self.cache[cacheKey]
     end
     
-    -- JIT lookup: scan all slots for this spell (and alternates)
+    -- Build list of IDs to check: mapped ID + alternates
     local idsToCheck = { spellID }
     local alt = self.alternateSpellIDs[spellID]
     if alt then table.insert(idsToCheck, alt) end
     
+    -- JIT lookup: scan all slots for matching spell
     for slot = 1, 120 do
         local actionType, id = GetActionInfo(slot)
-        if actionType == "spell" then
+        if actionType == "spell" and id then
             for _, targetID in ipairs(idsToCheck) do
                 if id == targetID then
                     local hotkey = self:GetHotkeyForSlot(slot)
@@ -168,7 +211,7 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         end
     end
     
-    -- Try ElvUI fallback
+    -- ElvUI fallback
     if ElvUI then
         local E = unpack(ElvUI)
         if E and E.ActionBars then
@@ -177,14 +220,18 @@ function Hotkeys:GetHotkeyForSpell(spellID)
                     for _, button in pairs(bar.buttons) do
                         if button.action then
                             local actionType, id = GetActionInfo(button.action)
-                            if actionType == "spell" and id == spellID then
-                                local bindTarget = button.keyBoundTarget or button.bindName
-                                if bindTarget then
-                                    local rawKey = GetBindingKey(bindTarget)
-                                    if rawKey then
-                                        local hotkey = CDM.UI:FormatHotkey(rawKey)
-                                        self.cache[cacheKey] = hotkey
-                                        return hotkey
+                            if actionType == "spell" then
+                                for _, targetID in ipairs(idsToCheck) do
+                                    if id == targetID then
+                                        local bindTarget = button.keyBoundTarget or button.bindName
+                                        if bindTarget then
+                                            local rawKey = GetBindingKey(bindTarget)
+                                            if rawKey then
+                                                local hotkey = CDM.UI:FormatHotkey(rawKey)
+                                                self.cache[cacheKey] = hotkey
+                                                return hotkey
+                                            end
+                                        end
                                     end
                                 end
                             end
@@ -303,33 +350,39 @@ SLASH_CDMDUMP1 = "/cdmxdump"
 SlashCmdList["CDMDUMP"] = function()
     print("=== CDMx SPELL ID DUMP ===")
     print("")
-    print("--- Action Bar ---")
+    print("--- Action Bar (slot: spell -> hotkey) ---")
     for slot = 1, 120 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" then
-            print(string.format("  Slot %d: spell:%d (%s)", slot, id, C_Spell.GetSpellName(id) or "?"))
+            local hotkey = Hotkeys:GetHotkeyForSlot(slot) or "NO KEY"
+            print(string.format("  Slot %d: spell:%d (%s) -> [%s]", slot, id, C_Spell.GetSpellName(id) or "?", hotkey))
         elseif actionType == "item" then
-            print(string.format("  Slot %d: item:%d (%s)", slot, id, C_Item.GetItemNameByID(id) or "?"))
+            local hotkey = Hotkeys:GetHotkeyForSlot(slot) or "NO KEY"
+            print(string.format("  Slot %d: item:%d (%s) -> [%s]", slot, id, C_Item.GetItemNameByID(id) or "?", hotkey))
         end
     end
     print("")
-    print("--- Cooldown Manager ---")
-    if EssentialCooldownViewer then
-        for _, child in ipairs({EssentialCooldownViewer:GetChildren()}) do
-            local sid = child.rangeCheckSpellID or child.cooldownID
-            if sid then
-                print(string.format("  Essential: spell:%d (%s)", sid, C_Spell.GetSpellName(sid) or "?"))
+    print("--- Cooldown Manager (frame -> spell -> hotkey) ---")
+    local function DumpViewer(viewer, viewerName)
+        if not viewer then return end
+        for i, child in ipairs({viewer:GetChildren()}) do
+            local baseID = child.GetBaseSpellID and child:GetBaseSpellID()
+            local rcID = child.rangeCheckSpellID
+            local cdID = child.cooldownID
+            local spellID = baseID or rcID or cdID
+            local method = baseID and "GetBaseSpellID" or (rcID and "rangeCheck" or "cooldownID")
+            if spellID then
+                local mappedID = Hotkeys.spellIDMap[spellID] or spellID
+                local hotkey = Hotkeys:GetHotkeyForSpell(spellID) or "NOT FOUND"
+                local mapNote = (mappedID ~= spellID) and string.format(" -> mapped:%d", mappedID) or ""
+                print(string.format("  %s[%d]: %s:%d%s (%s) -> [%s]",
+                    viewerName, i, method, spellID, mapNote,
+                    C_Spell.GetSpellName(spellID) or "?", hotkey))
             end
         end
     end
-    if UtilityCooldownViewer then
-        for _, child in ipairs({UtilityCooldownViewer:GetChildren()}) do
-            local sid = child.rangeCheckSpellID or child.cooldownID
-            if sid then
-                print(string.format("  Utility: spell:%d (%s)", sid, C_Spell.GetSpellName(sid) or "?"))
-            end
-        end
-    end
+    DumpViewer(EssentialCooldownViewer, "Essential")
+    DumpViewer(UtilityCooldownViewer, "Utility")
     print("=== END ===")
 end
 

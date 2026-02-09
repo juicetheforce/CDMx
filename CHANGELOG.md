@@ -2,6 +2,27 @@
 
 All notable changes to CDMx will be documented in this file.
 
+## [1.0.1] - 2026-02-10
+
+### Hotkey Detection Overhaul
+
+**Fixed: Incorrect hotkeys on Paladin and other classes**
+- Replaced unreliable `cooldownID` frame property with `GetBaseSpellID()` method call
+- Blizzard's cooldown manager uses internal frame pool identifiers (`cooldownID`) that don't correspond to the actual displayed spell — `GetBaseSpellID()` returns the real spell
+- This fix should improve hotkey accuracy across all classes, especially for self-buffs, PBAoE abilities, and talent-replaced spells
+
+**Fixed: Hotkeys not showing for abilities on bars 2-10**
+- `GetHotkeyForSlot()` now correctly maps slot numbers to their proper binding names (`MULTIACTIONBAR3BUTTON`, `MULTIACTIONBAR4BUTTON`, etc.)
+- Previously only main action bar (slots 1-12) returned keybinds
+
+**Improved: Spell override detection for talent replacements**
+- Added `spellIDMap` entry for Templar's Verdict → Final Verdict (Paladin)
+- Existing mappings retained for Void Metamorphosis and Vengeful Retreat (DH)
+
+**Added: Enhanced diagnostic commands**
+- `/cdmxdump` now shows identification method (GetBaseSpellID vs rangeCheck) and full resolution chain
+- `/cdmxframes` probes all available methods on problem frames for debugging
+
 ## [1.0.0] - 2026-02-08
 
 ### First Public Release

@@ -137,7 +137,11 @@ function BlizzHooks:UpdateAllVisibleFrames()
             return
         end
         for _, child in ipairs({viewer:GetChildren()}) do
-            local spellID = child.rangeCheckSpellID or child.cooldownID
+            -- Use GetBaseSpellID() method first (reliable), then rangeCheckSpellID,
+            -- then cooldownID property as last resort
+            local spellID = (child.GetBaseSpellID and child:GetBaseSpellID())
+                         or child.rangeCheckSpellID
+                         or child.cooldownID
             if spellID then
                 self:UpdateHotkeyText(child, spellID, nil)
                 updated = updated + 1
@@ -171,8 +175,6 @@ function BlizzHooks:HookSetCooldownMethod()
         return
     end
     
-    local trackedFrames = {}
-    
     hooksecurefunc(cooldownMT, "SetCooldown", function(self, start, duration)
         local parent = self:GetParent()
         if not parent then return end
@@ -185,16 +187,15 @@ function BlizzHooks:HookSetCooldownMethod()
             return
         end
         
-        if trackedFrames[parent] then return end
-        trackedFrames[parent] = true
-        
         local grandparent = parent:GetParent()
         if not grandparent then return end
         
         local gpName = grandparent:GetName() or ""
         if not gpName:match("CooldownViewer") then return end
         
-        local spellID = parent.rangeCheckSpellID or parent.cooldownID
+        local spellID = (parent.GetBaseSpellID and parent:GetBaseSpellID())
+                     or parent.rangeCheckSpellID
+                     or parent.cooldownID
         if spellID then
             BlizzHooks:UpdateHotkeyText(parent, spellID, nil)
         end
@@ -250,4 +251,46 @@ end
 SLASH_CDMUPDATE1 = "/cdtupdate"
 SlashCmdList["CDMUPDATE"] = function()
     BlizzHooks:UpdateAllVisibleFrames()
+    CDM:Msg("Updated all visible frames")
+end
+
+-- Targeted probe: call all spell-related methods on frames missing rangeCheckSpellID
+SLASH_CDMXFRAMES1 = "/cdmxframes"
+SlashCmdList["CDMXFRAMES"] = function()
+    print("=== CDMx METHOD PROBE ===")
+    local function ProbeViewer(viewer, viewerName)
+        if not viewer then return end
+        for i, child in ipairs({viewer:GetChildren()}) do
+            local rcID = child.rangeCheckSpellID
+            local cdProp = child.cooldownID
+            if not rcID then
+                print(string.format("--- %s[%d] rangeCheck:nil cooldownID(prop):%s ---",
+                    viewerName, i, tostring(cdProp)))
+                
+                local methods = {
+                    "GetCooldownID", "GetBaseSpellID", "GetSpellID",
+                    "GetLinkedSpell", "GetAuraSpellID", "GetNameText",
+                    "GetIconTexture", "GetSpellTexture", "GetCooldownInfo",
+                    "GetSpellCooldownInfo", "GetSpellChargeInfo",
+                }
+                for _, method in ipairs(methods) do
+                    if child[method] and type(child[method]) == "function" then
+                        local ok, r1, r2, r3 = pcall(child[method], child)
+                        if ok then
+                            local parts = {tostring(r1)}
+                            if r2 ~= nil then table.insert(parts, tostring(r2)) end
+                            if r3 ~= nil then table.insert(parts, tostring(r3)) end
+                            print(string.format("  %s() = %s", method, table.concat(parts, ", ")))
+                        else
+                            print(string.format("  %s() = ERROR: %s", method, tostring(r1)))
+                        end
+                    end
+                end
+                print("")
+            end
+        end
+    end
+    ProbeViewer(EssentialCooldownViewer, "Essential")
+    ProbeViewer(UtilityCooldownViewer, "Utility")
+    print("=== END ===")
 end

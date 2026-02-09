@@ -9,7 +9,7 @@
 local ADDON_NAME, CDM = ...
 
 -- Version info
-CDM.version = "1.0.0"
+CDM.version = "1.0.1"
 CDM.debug = false
 CDM.verbose = false
 
