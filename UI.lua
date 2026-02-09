@@ -252,7 +252,11 @@ function UI:UpdateCooldown(button, start, duration, minDuration)
     if not button or not button.cooldown then return end
     minDuration = minDuration or 1.5
     
-    if start and start > 0 and duration and duration > minDuration then
+    -- tonumber() safely handles WoW's "secret values" from protected cooldown APIs
+    local s = tonumber(start)
+    local d = tonumber(duration)
+    
+    if s and s > 0 and d and d > minDuration then
         button.cooldown:SetCooldown(start, duration)
         button.cooldown:Show()
     else
