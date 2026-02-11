@@ -24,9 +24,10 @@ Hotkeys.cache = {}
 -- SPELL ID MAPPINGS
 --============================================================================
 
--- Cooldown Manager sometimes uses different spell IDs than action bars.
--- These are for cases where rangeCheckSpellID or GetBaseSpellID() returns
--- a base spell but the action bar has a talent replacement.
+-- Manual spell ID overrides for cases where GetBaseSpellID() and
+-- C_Spell.GetOverrideSpell() don't resolve the mismatch automatically.
+-- Most talent replacements (e.g. Crusader Strike -> Blessed Hammer) are
+-- now handled automatically via GetOverrideSpell() in GetHotkeyForSpell().
 -- Map: [cooldownManagerID] = actionBarID
 Hotkeys.spellIDMap = {
     [49411] = 1217605,   -- Void Metamorphosis (DH)
@@ -181,16 +182,36 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         spellID = mappedID
     end
     
-    -- Check cache
+    -- Check cache directly
     local cacheKey = "spell:" .. spellID
     if self.cache[cacheKey] then
         return self.cache[cacheKey]
     end
     
-    -- Build list of IDs to check: mapped ID + alternates
+    -- Check if this base spell has been talent-replaced (e.g. Crusader Strike -> Blessed Hammer)
+    -- GetOverrideSpell returns the replacement spell if a talent has replaced the base spell
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local overrideID = C_Spell.GetOverrideSpell(spellID)
+        if overrideID and overrideID ~= spellID then
+            local overrideKey = "spell:" .. overrideID
+            if self.cache[overrideKey] then
+                -- Cache result under the base spell too for future lookups
+                self.cache[cacheKey] = self.cache[overrideKey]
+                return self.cache[cacheKey]
+            end
+        end
+    end
+    
+    -- Build list of IDs to check: original + alternates + override
     local idsToCheck = { spellID }
     local alt = self.alternateSpellIDs[spellID]
     if alt then table.insert(idsToCheck, alt) end
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local overrideID = C_Spell.GetOverrideSpell(spellID)
+        if overrideID and overrideID ~= spellID then
+            table.insert(idsToCheck, overrideID)
+        end
+    end
     
     -- JIT lookup: scan all slots for matching spell
     for slot = 1, 120 do

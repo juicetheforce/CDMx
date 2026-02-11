@@ -2,6 +2,15 @@
 
 All notable changes to CDMx will be documented in this file.
 
+## [1.0.2] - 2026-02-11
+
+### Automatic Talent Replacement Detection
+
+**Fixed: Talent-replaced abilities missing hotkeys**
+- Hotkey lookup now automatically detects talent replacements using `C_Spell.GetOverrideSpell()`
+- Fixes Blessed Hammer (replaces Crusader Strike), and similar talent swaps across all classes
+- No more need to manually hardcode every talent replacement per spec
+
 ## [1.0.1] - 2026-02-10
 
 ### Hotkey Detection Overhaul
