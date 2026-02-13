@@ -2,6 +2,19 @@
 
 All notable changes to CDMx will be documented in this file.
 
+## [1.0.3] - 2026-02-12
+
+### Fixed Hotkey Detection for Default Blizzard Action Bars
+
+**Fixed: Hotkeys not detected on secondary bars for non-ElvUI users**
+- Replaced hardcoded slot→binding table with dynamic frame-based discovery
+- The addon now queries actual button frames at runtime to determine which keybind maps to which action slot
+- Works correctly for default Blizzard bars, ElvUI, and other bar addons
+- Previous hardcoded mapping was based on ElvUI's slot assignments which differ from Blizzard's default layout
+
+**Expanded action bar scan range**
+- Increased slot scan from 120 to 180 to cover MultiBar5-8 which can use higher slot numbers on default bars
+
 ## [1.0.2] - 2026-02-11
 
 ### Automatic Talent Replacement Detection

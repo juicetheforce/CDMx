@@ -42,48 +42,92 @@ Hotkeys.alternateSpellIDs = {
 }
 
 --============================================================================
--- ACTION BAR SCANNING
+-- SLOT → BINDING MAP (built dynamically from actual button frames)
 --============================================================================
 
 --[[
-    Map an action bar slot number (1-120) to the correct binding command name.
-    Slots 1-12 are the main bar, 13-24 are bar 2, etc.
-    Each bar range uses a different binding prefix.
+    Known Blizzard action button frame sets and their binding prefixes.
+    We scan these frames at runtime to discover which action slot each
+    button owns, then map slot → binding name. This works regardless of
+    whether the player uses default bars, ElvUI, or other bar addons,
+    because the slot↔binding relationship is defined by the frames.
+    
+    Previous approach used a hardcoded slot→binding table, but the mapping
+    differs between ElvUI and default Blizzard bars (e.g. slots 61-72 are
+    MULTIACTIONBAR1BUTTON on default bars but MULTIACTIONBAR5BUTTON in
+    some ElvUI configs). Dynamic discovery eliminates this problem.
 ]]--
-local slotBindingMap = {
-    -- Slots 1-12: Main Action Bar
-    { start = 1,   stop = 12,  prefix = "ACTIONBUTTON",          offset = 0  },
-    -- Slots 13-24: Bottom Left (MultiBar3 in binding names)
-    { start = 13,  stop = 24,  prefix = "MULTIACTIONBAR3BUTTON", offset = 12 },
-    -- Slots 25-36: Bottom Right (MultiBar4)
-    { start = 25,  stop = 36,  prefix = "MULTIACTIONBAR4BUTTON", offset = 24 },
-    -- Slots 37-48: Right Bar 2 (MultiBar2)
-    { start = 37,  stop = 48,  prefix = "MULTIACTIONBAR2BUTTON", offset = 36 },
-    -- Slots 49-60: Right Bar 1 (MultiBar1)
-    { start = 49,  stop = 60,  prefix = "MULTIACTIONBAR1BUTTON", offset = 48 },
-    -- Slots 61-72: MultiBar5
-    { start = 61,  stop = 72,  prefix = "MULTIACTIONBAR5BUTTON", offset = 60 },
-    -- Slots 73-84: MultiBar6
-    { start = 73,  stop = 84,  prefix = "MULTIACTIONBAR6BUTTON", offset = 72 },
-    -- Slots 85-96: MultiBar7
-    { start = 85,  stop = 96,  prefix = "MULTIACTIONBAR7BUTTON", offset = 84 },
-    -- Slots 97-108: MultiBar8 (if exists in Midnight)
-    { start = 97,  stop = 108, prefix = "MULTIACTIONBAR8BUTTON", offset = 96 },
+local blizzardButtonSets = {
+    { frame = "ActionButton",              binding = "ACTIONBUTTON" },
+    { frame = "MultiBarBottomLeftButton",  binding = "MULTIACTIONBAR1BUTTON" },
+    { frame = "MultiBarBottomRightButton", binding = "MULTIACTIONBAR2BUTTON" },
+    { frame = "MultiBarRightButton",       binding = "MULTIACTIONBAR3BUTTON" },
+    { frame = "MultiBarLeftButton",        binding = "MULTIACTIONBAR4BUTTON" },
+    { frame = "MultiBar5Button",           binding = "MULTIACTIONBAR5BUTTON" },
+    { frame = "MultiBar6Button",           binding = "MULTIACTIONBAR6BUTTON" },
+    { frame = "MultiBar7Button",           binding = "MULTIACTIONBAR7BUTTON" },
+    { frame = "MultiBar8Button",           binding = "MULTIACTIONBAR8BUTTON" },
 }
+
+-- Runtime cache: slot number → binding command name (e.g. 61 → "MULTIACTIONBAR1BUTTON1")
+Hotkeys.slotToBinding = {}
+
+--[[
+    Scan all known action button frames and build the slot → binding map.
+    Called during ScanActionBars to keep the map current.
+]]--
+function Hotkeys:BuildSlotBindingMap()
+    wipe(self.slotToBinding)
+    
+    for _, set in ipairs(blizzardButtonSets) do
+        for i = 1, 12 do
+            local frame = _G[set.frame .. i]
+            if frame then
+                local slot = nil
+                
+                -- ActionButton slots depend on current bar page, but
+                -- ACTIONBUTTON1 always triggers button 1 on the main bar
+                -- regardless of paging. Map button index directly.
+                if set.frame == "ActionButton" then
+                    slot = i
+                else
+                    -- Multi-action bars: get the fixed slot from the frame
+                    if frame.GetAttribute then
+                        local ok, action = pcall(frame.GetAttribute, frame, "action")
+                        if ok and action and type(action) == "number" and action > 0 then
+                            slot = action
+                        end
+                    end
+                    -- Fallback: try the .action property
+                    if not slot and frame.action and type(frame.action) == "number" then
+                        slot = frame.action
+                    end
+                end
+                
+                if slot then
+                    self.slotToBinding[slot] = set.binding .. i
+                end
+            end
+        end
+    end
+    
+    if CDM.debug then
+        local count = 0
+        for _ in pairs(self.slotToBinding) do count = count + 1 end
+        CDM:Print(string.format("Built slot->binding map: %d slots mapped", count))
+    end
+end
 
 --[[
     Get the formatted hotkey text for an action bar slot number.
+    Uses the dynamically built slot→binding map.
 ]]--
 function Hotkeys:GetHotkeyForSlot(slot)
-    for _, mapping in ipairs(slotBindingMap) do
-        if slot >= mapping.start and slot <= mapping.stop then
-            local buttonIndex = slot - mapping.offset
-            local bindingName = mapping.prefix .. buttonIndex
-            local key = GetBindingKey(bindingName)
-            if key then
-                return CDM.UI:FormatHotkey(key)
-            end
-            return nil
+    local bindingName = self.slotToBinding[slot]
+    if bindingName then
+        local key = GetBindingKey(bindingName)
+        if key then
+            return CDM.UI:FormatHotkey(key)
         end
     end
     return nil
@@ -109,12 +153,19 @@ end
 function Hotkeys:ScanActionBars()
     wipe(self.cache)
     
+    -- Build the slot→binding map from actual button frames
+    -- This must happen before scanning so GetHotkeyForSlot works
+    self:BuildSlotBindingMap()
+    
     local found = 0
     
-    -- Scan standard action bar slots (covers all bar addons)
+    -- Scan action bar slots. Range covers:
+    -- 1-12: Main bar, 13-72: Bar pages 2-6
+    -- 73-120: MultiBar BottomLeft/Right, Right1/Right2
+    -- 145-192: MultiBar 5-8 (Dragonflight+)
     -- Last-match-wins: if a spell is on multiple slots, the higher
     -- slot's keybind takes priority.
-    for slot = 1, 120 do
+    for slot = 1, 180 do
         local spellID, itemID = self:GetSpellFromSlot(slot)
         if spellID or itemID then
             local hotkey = self:GetHotkeyForSlot(slot)
@@ -214,7 +265,7 @@ function Hotkeys:GetHotkeyForSpell(spellID)
     end
     
     -- JIT lookup: scan all slots for matching spell
-    for slot = 1, 120 do
+    for slot = 1, 180 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" and id then
             for _, targetID in ipairs(idsToCheck) do
@@ -291,7 +342,7 @@ local lastActionBarState = {}
 
 local function GetActionBarState()
     local state = {}
-    for slot = 1, 120 do
+    for slot = 1, 180 do
         local actionType, id = GetActionInfo(slot)
         if actionType and id then
             state[slot] = actionType .. ":" .. id
@@ -372,7 +423,7 @@ SlashCmdList["CDMDUMP"] = function()
     print("=== CDMx SPELL ID DUMP ===")
     print("")
     print("--- Action Bar (slot: spell -> hotkey) ---")
-    for slot = 1, 120 do
+    for slot = 1, 180 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" then
             local hotkey = Hotkeys:GetHotkeyForSlot(slot) or "NO KEY"
