@@ -2,6 +2,41 @@
 
 All notable changes to CDMx will be documented in this file.
 
+## [1.0.4] - 2026-02-14
+
+### Named Profile System
+
+**New: Full profile management**
+- All settings are now stored in named profiles (like ElvUI, WeakAuras, Details)
+- Each character can use a different profile, or multiple characters can share one
+- Create, copy, rename, delete, and reset profiles via config UI or slash commands
+- Profile dropdown selector in the config panel for quick switching
+- Character-to-profile assignments shown in config
+
+**New: Centered bar layout**
+- Bars now grow equally in both directions from their anchor point
+- Keeps bars visually centered when abilities are added/removed or when switching specs
+- Per-bar toggle in config (default: on) for both trinket bar and custom bars
+- Works correctly with Edit Mode drag positioning
+
+**Improved: Live item picker updates**
+- Adding/removing items from custom bars now applies immediately on save
+- No longer requires /reload after editing bar contents
+
+**Migration: Automatic for existing users**
+- Existing settings are automatically wrapped into a "Default" profile on first load
+- No manual action required, all settings preserved
+
+**Slash commands:**
+- `/cdmx profile` - Show current profile
+- `/cdmx profile list` - List all profiles with character assignments
+- `/cdmx profile use <name>` - Switch to a profile
+- `/cdmx profile create <name>` - Create new profile
+- `/cdmx profile copy <source> <dest>` - Copy a profile
+- `/cdmx profile delete <name>` - Delete a profile
+- `/cdmx profile rename <old> <new>` - Rename a profile
+- `/cdmx profile reset` - Reset current profile to defaults
+
 ## [1.0.3] - 2026-02-12
 
 ### Fixed Hotkey Detection for Default Blizzard Action Bars

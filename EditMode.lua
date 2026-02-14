@@ -144,6 +144,20 @@ function EditMode:CreateMover(barID, barFrame, label, settings)
         -- Save final position
         local point, _, _, x, y = self:GetPoint()
         local s = self._barSettings
+        local bf = self._barFrame
+        
+        -- For centered bars, convert position to CENTER-relative
+        -- so the bar grows symmetrically when icons are added/removed
+        if s and s.centered ~= false and bf then
+            local cx, cy = bf:GetCenter()
+            local ux, uy = UIParent:GetCenter()
+            if cx and ux then
+                point = "CENTER"
+                x = math.floor(cx - ux)
+                y = math.floor(cy - uy)
+            end
+        end
+        
         if s then
             s.position = {
                 point = point,
@@ -153,7 +167,6 @@ function EditMode:CreateMover(barID, barFrame, label, settings)
         end
         
         -- Snap bar to final position
-        local bf = self._barFrame
         if bf then
             bf:ClearAllPoints()
             bf:SetPoint(point, UIParent, point, math.floor(x), math.floor(y))

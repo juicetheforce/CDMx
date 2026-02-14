@@ -131,8 +131,12 @@ function TrinketBar:Update()
         end
     end
     
-    -- Layout (centered, no title offset)
-    CDM.UI:LayoutBarCentered(self.frame, settings)
+    -- Layout
+    if settings.centered ~= false then
+        CDM.UI:LayoutBarCentered(self.frame, settings)
+    else
+        CDM.UI:LayoutBar(self.frame, settings, 0)
+    end
 end
 
 function TrinketBar:UpdateVisibility()

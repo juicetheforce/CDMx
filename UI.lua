@@ -437,8 +437,9 @@ function UI:LayoutBar(frame, settings, offsetY)
 end
 
 --[[
-    Simplified layout for bars where all icons are always visible
-    (like trinket bar). Positions icons centered in the frame.
+    Layout icons in a centered bar. The frame is anchored at CENTER so that
+    when icons are added or removed, the bar grows/shrinks equally in both
+    directions. This keeps the bar visually centered regardless of content.
     
     @param frame    Frame - Bar frame with .icons table
     @param settings table - iconSize, padding, horizontal
@@ -448,8 +449,9 @@ function UI:LayoutBarCentered(frame, settings)
     
     local iconSize = settings.iconSize or 40
     local padding = settings.padding or 5
-    local horizontal = settings.horizontal
+    local horizontal = settings.horizontal ~= false  -- default true
     
+    -- Collect visible icons
     local visibleIcons = {}
     for _, icon in ipairs(frame.icons) do
         icon:SetSize(iconSize, iconSize)
@@ -464,6 +466,31 @@ function UI:LayoutBarCentered(frame, settings)
         return
     end
     
+    -- Calculate total bar dimensions
+    local totalWidth, totalHeight
+    if horizontal then
+        totalWidth = (iconSize * count) + (padding * (count - 1))
+        totalHeight = iconSize
+    else
+        totalWidth = iconSize
+        totalHeight = (iconSize * count) + (padding * (count - 1))
+    end
+    
+    -- Resize frame FIRST so icon positioning is relative to correct frame size
+    frame:SetSize(totalWidth, totalHeight)
+    
+    -- Ensure frame is anchored at CENTER for symmetrical growth
+    -- Only re-anchor if not currently being dragged
+    if not frame._cdmDragging then
+        local _, _, _, curX, curY = frame:GetPoint()
+        local pos = frame._cdmSettings and frame._cdmSettings.position
+        local cx = pos and pos.x or curX or 0
+        local cy = pos and pos.y or curY or 0
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", cx, cy)
+    end
+    
+    -- Position icons from the left/top edge of the frame
     for i, icon in ipairs(visibleIcons) do
         icon:ClearAllPoints()
         if i == 1 then
@@ -479,18 +506,5 @@ function UI:LayoutBarCentered(frame, settings)
                 icon:SetPoint("TOP", visibleIcons[i - 1], "BOTTOM", 0, -padding)
             end
         end
-    end
-    
-    -- Resize
-    if horizontal then
-        frame:SetSize(
-            (iconSize * count) + (padding * (count - 1)),
-            iconSize
-        )
-    else
-        frame:SetSize(
-            iconSize,
-            (iconSize * count) + (padding * (count - 1))
-        )
     end
 end

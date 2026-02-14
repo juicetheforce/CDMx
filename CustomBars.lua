@@ -63,7 +63,11 @@ function CustomBars:UpdateLayout(barName)
     local settings = CDM.db.customBars[barName]
     if not settings then return end
     
-    CDM.UI:LayoutBar(frame, settings)
+    if settings.centered ~= false then
+        CDM.UI:LayoutBarCentered(frame, settings)
+    else
+        CDM.UI:LayoutBar(frame, settings)
+    end
 end
 
 --[[

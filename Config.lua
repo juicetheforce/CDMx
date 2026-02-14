@@ -359,6 +359,160 @@ local function CreateNote(parent, text, yOffset)
     return note, yOffset - 18
 end
 
+--[[
+    Create a dropdown selector. Shows a button with the current value;
+    clicking it opens a list of options to choose from.
+    
+    @param parent   Frame
+    @param label    string - Label text
+    @param options  function|table - Either a table of {text, value} or a function
+                    that returns one (called each time the dropdown opens, for dynamic lists)
+    @param current  any - Currently selected value
+    @param onChange function(value, text) - Called when selection changes
+    @param yOffset  number
+    @return row, newY
+]]--
+local function CreateDropdown(parent, label, options, current, onChange, yOffset)
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetPoint("TOPLEFT", 0, yOffset)
+    row:SetSize(CONTENT_WIDTH - (INDENT * 2), ROW_HEIGHT + 2)
+    
+    local labelText = row:CreateFontString(nil, "OVERLAY")
+    labelText:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    labelText:SetPoint("LEFT", 10, 0)
+    labelText:SetTextColor(unpack(C.textLabel))
+    labelText:SetText(label)
+    
+    -- Find current display text
+    local currentText = tostring(current)
+    local optList = type(options) == "function" and options() or options
+    for _, opt in ipairs(optList) do
+        if opt.value == current then currentText = opt.text; break end
+    end
+    
+    -- The clickable button showing current value
+    local btn = CreateFrame("Button", nil, row)
+    btn:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+    btn:SetSize(180, 22)
+    
+    btn.bg = btn:CreateTexture(nil, "BACKGROUND")
+    btn.bg:SetAllPoints()
+    btn.bg:SetColorTexture(unpack(C.inputBg))
+    
+    btn.border = btn:CreateTexture(nil, "BORDER")
+    btn.border:SetPoint("TOPLEFT", -1, 1)
+    btn.border:SetPoint("BOTTOMRIGHT", 1, -1)
+    btn.border:SetColorTexture(unpack(C.border))
+    
+    btn.text = btn:CreateFontString(nil, "OVERLAY")
+    btn.text:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    btn.text:SetPoint("LEFT", 6, 0)
+    btn.text:SetPoint("RIGHT", -18, 0)
+    btn.text:SetJustifyH("LEFT")
+    btn.text:SetTextColor(unpack(C.text))
+    btn.text:SetText(currentText)
+    
+    local arrow = btn:CreateFontString(nil, "OVERLAY")
+    arrow:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    arrow:SetPoint("RIGHT", -4, -1)
+    arrow:SetTextColor(unpack(C.textDim))
+    arrow:SetText("v")
+    
+    -- The popup menu frame
+    local menu = CreateFrame("Frame", nil, btn, "BackdropTemplate")
+    menu:SetFrameStrata("DIALOG")
+    menu:SetClampedToScreen(true)
+    menu:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    menu:SetBackdropColor(0.12, 0.12, 0.14, 0.97)
+    menu:SetBackdropBorderColor(unpack(C.border))
+    menu:Hide()
+    
+    local function BuildMenu()
+        -- Clear old items
+        if menu.items then
+            for _, item in ipairs(menu.items) do item:Hide() end
+        end
+        menu.items = {}
+        
+        local curOptions = type(options) == "function" and options() or options
+        local itemHeight = 20
+        local menuWidth = 180
+        
+        for i, opt in ipairs(curOptions) do
+            local item = CreateFrame("Button", nil, menu)
+            item:SetSize(menuWidth - 2, itemHeight)
+            item:SetPoint("TOPLEFT", 1, -((i - 1) * itemHeight) - 1)
+            
+            item.highlight = item:CreateTexture(nil, "HIGHLIGHT")
+            item.highlight:SetAllPoints()
+            item.highlight:SetColorTexture(unpack(C.buttonHover))
+            
+            item.label = item:CreateFontString(nil, "OVERLAY")
+            item.label:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+            item.label:SetPoint("LEFT", 6, 0)
+            item.label:SetTextColor(unpack(C.text))
+            item.label:SetText(opt.text)
+            
+            -- Highlight active selection
+            if opt.value == current then
+                item.label:SetTextColor(unpack(C.accent))
+            end
+            
+            item:SetScript("OnClick", function()
+                current = opt.value
+                currentText = opt.text
+                btn.text:SetText(currentText)
+                menu:Hide()
+                if onChange then onChange(opt.value, opt.text) end
+            end)
+            
+            table.insert(menu.items, item)
+        end
+        
+        menu:SetSize(menuWidth, (#curOptions * itemHeight) + 2)
+    end
+    
+    btn:SetScript("OnClick", function()
+        if menu:IsShown() then
+            menu:Hide()
+        else
+            BuildMenu()
+            menu:ClearAllPoints()
+            menu:SetPoint("TOPLEFT", btn, "BOTTOMLEFT", 0, -2)
+            menu:Show()
+        end
+    end)
+    
+    btn:SetScript("OnEnter", function(self) self.bg:SetColorTexture(unpack(C.buttonHover)) end)
+    btn:SetScript("OnLeave", function(self) self.bg:SetColorTexture(unpack(C.inputBg)) end)
+    
+    -- Close menu when clicking elsewhere
+    menu:SetScript("OnShow", function()
+        menu:SetPropagateKeyboardInput(false)
+    end)
+    menu:SetScript("OnHide", function()
+        menu:SetPropagateKeyboardInput(true)
+    end)
+    
+    -- Close on escape
+    menu:EnableKeyboard(true)
+    menu:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then self:Hide() end
+    end)
+    
+    -- External method to update the display text
+    row.SetValue = function(_, val, txt)
+        current = val
+        btn.text:SetText(txt or tostring(val))
+    end
+    
+    return row, yOffset - (ROW_HEIGHT + 4)
+end
+
 --============================================================================
 -- MAIN PANEL
 --============================================================================
@@ -508,6 +662,11 @@ function Config:CreatePanel()
         if CDM.TrinketBar then CDM.TrinketBar:Update() end
     end, y)
     
+    _, y = CreateCheckbox(trinketContent, "Centered layout", CDM.db.trinketBar.centered ~= false, function(v)
+        CDM.db.trinketBar.centered = v
+        if CDM.TrinketBar then CDM.TrinketBar:Update() end
+    end, y)
+    
     _, y = CreateSlider(trinketContent, "Icon Size", 20, 80, CDM.db.trinketBar.iconSize or 40, 1, function(v)
         CDM.db.trinketBar.iconSize = v
         if CDM.TrinketBar then CDM.TrinketBar:Update() end
@@ -555,6 +714,7 @@ function Config:CreatePanel()
                     else
                         CDM.db.customBars[name] = {
                             enabled = true, locked = false, horizontal = true,
+                            centered = true,
                             iconSize = 40, padding = 5,
                             position = { point = "CENTER", x = 0, y = 0 },
                             squareIcons = CDM.db.customBarsStyle.squareIcons,
@@ -661,6 +821,14 @@ function Config:CreatePanel()
                 end
             end, y)
             
+            _, y = CreateCheckbox(customContent, "Centered layout", barSettings.centered ~= false, function(v)
+                barSettings.centered = v
+                if CDM.CustomBars then
+                    CDM.CustomBars:UpdateLayout(barName)
+                    CDM.CustomBars:UpdateBar(barName)
+                end
+            end, y)
+            
             _, y = CreateStepper(customContent, "Visibility", {
                 {text = "Always Show", value = "always"},
                 {text = "In Combat Only", value = "combat"},
@@ -704,6 +872,168 @@ function Config:CreatePanel()
     end
     
     customContent:SetHeight(math.abs(y) + 8)
+    
+    -- ============ PROFILES ============
+    sectionY = sectionY - 30 - SECTION_GAP
+    local profileHeader, profileContent = CreateSectionHeader(content, "Profiles", sectionY)
+    table.insert(self.sections, {header = profileHeader, content = profileContent})
+    
+    y = -8
+    _, y = CreateNote(profileContent, "Manage named profiles. Each character can use a different profile, or share one across alts.", y)
+    
+    -- Show current character
+    local currentLabel = profileContent:CreateFontString(nil, "OVERLAY")
+    currentLabel:SetFont("Fonts\\FRIZQT__.TTF", 11, "")
+    currentLabel:SetPoint("TOPLEFT", 10, y)
+    currentLabel:SetTextColor(unpack(C.accent))
+    currentLabel:SetText("Character: " .. CDM:GetCharKey())
+    y = y - 22
+    
+    -- Profile dropdown (dynamic options - rebuilt each time it opens)
+    _, y = CreateDropdown(profileContent, "Active Profile", function()
+        local list = {}
+        for _, name in ipairs(CDM:GetProfileList()) do
+            table.insert(list, { text = name, value = name })
+        end
+        return list
+    end, CDM.activeProfile or "Default", function(v)
+        CDM:SetProfile(v)
+    end, y)
+    
+    -- Row 1: New + Copy
+    local newBtn = CreateStyledButton(profileContent, "+ New Profile", 120, 24, function()
+        StaticPopupDialogs["CDMX_NEW_PROFILE"] = {
+            text = "Enter name for new profile:",
+            button1 = "Create", button2 = "Cancel", hasEditBox = true,
+            OnAccept = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                local name = editBox and editBox:GetText() or ""
+                if name and name ~= "" then
+                    CDM:CreateProfile(name)
+                end
+            end,
+            OnShow = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                if editBox then editBox:SetFocus() end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+        }
+        StaticPopup_Show("CDMX_NEW_PROFILE")
+    end, y)
+    
+    CreateStyledButton(profileContent, "Copy Current", 120, 24, function()
+        StaticPopupDialogs["CDMX_COPY_PROFILE"] = {
+            text = "Copy '" .. CDM.activeProfile .. "' to new profile named:",
+            button1 = "Copy", button2 = "Cancel", hasEditBox = true,
+            OnAccept = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                local name = editBox and editBox:GetText() or ""
+                if name and name ~= "" then
+                    CDM:CopyProfile(CDM.activeProfile, name)
+                end
+            end,
+            OnShow = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                if editBox then editBox:SetFocus() end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+        }
+        StaticPopup_Show("CDMX_COPY_PROFILE")
+    end, y, 138)
+    y = y - 30
+    
+    -- Row 2: Rename + Delete
+    CreateStyledButton(profileContent, "Rename", 120, 24, function()
+        StaticPopupDialogs["CDMX_RENAME_PROFILE"] = {
+            text = "Rename profile '" .. CDM.activeProfile .. "' to:",
+            button1 = "Rename", button2 = "Cancel", hasEditBox = true,
+            OnAccept = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                local name = editBox and editBox:GetText() or ""
+                if name and name ~= "" then
+                    CDM:RenameProfile(CDM.activeProfile, name)
+                end
+            end,
+            OnShow = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                if editBox then editBox:SetFocus() end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+        }
+        StaticPopup_Show("CDMX_RENAME_PROFILE")
+    end, y)
+    
+    local delProfileBtn = CreateStyledButton(profileContent, "Delete Profile", 120, 24, function()
+        -- Build list of deletable profiles (everything except the active one)
+        local deletable = {}
+        for _, name in ipairs(CDM:GetProfileList()) do
+            if name ~= CDM.activeProfile then
+                table.insert(deletable, name)
+            end
+        end
+        
+        if #deletable == 0 then
+            CDM:Msg("No other profiles to delete. Create another profile first.")
+            return
+        end
+        
+        StaticPopupDialogs["CDMX_DELETE_PROFILE"] = {
+            text = "Enter name of profile to delete (cannot delete active profile):\n\nDeletable: " .. table.concat(deletable, ", "),
+            button1 = "Delete", button2 = "Cancel", hasEditBox = true,
+            OnAccept = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                local name = editBox and editBox:GetText() or ""
+                if name and name ~= "" then
+                    CDM:DeleteProfile(name)
+                end
+            end,
+            OnShow = function(self)
+                local editBox = self:GetParent().editBox or self.editBox or _G[self:GetName().."EditBox"]
+                if editBox then editBox:SetFocus() end
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+        }
+        StaticPopup_Show("CDMX_DELETE_PROFILE")
+    end, y, 138)
+    delProfileBtn.bg:SetColorTexture(0.25, 0.12, 0.12, 1)
+    delProfileBtn:SetScript("OnEnter", function(self) self.bg:SetColorTexture(0.35, 0.15, 0.15, 1) end)
+    delProfileBtn:SetScript("OnLeave", function(self) self.bg:SetColorTexture(0.25, 0.12, 0.12, 1) end)
+    y = y - 30
+    
+    -- Row 3: Reset
+    CreateStyledButton(profileContent, "Reset to Defaults", 140, 24, function()
+        StaticPopupDialogs["CDMX_RESET_PROFILE"] = {
+            text = "Reset profile '" .. CDM.activeProfile .. "' to defaults? All settings will be lost.",
+            button1 = "Reset", button2 = "Cancel",
+            OnAccept = function()
+                CDM:ResetProfile()
+            end,
+            timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
+        }
+        StaticPopup_Show("CDMX_RESET_PROFILE")
+    end, y)
+    y = y - 34
+    
+    -- Character assignments
+    local charMapLabel = profileContent:CreateFontString(nil, "OVERLAY")
+    charMapLabel:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+    charMapLabel:SetPoint("TOPLEFT", 10, y)
+    charMapLabel:SetTextColor(unpack(C.textDim))
+    charMapLabel:SetText("Character assignments:")
+    y = y - 16
+    
+    for charKey, pName in pairs(CDMxDB.charMap or {}) do
+        local charLine = profileContent:CreateFontString(nil, "OVERLAY")
+        charLine:SetFont("Fonts\\FRIZQT__.TTF", 10, "")
+        charLine:SetPoint("TOPLEFT", 16, y)
+        charLine:SetTextColor(unpack(C.text))
+        charLine:SetText(charKey .. "  ->  " .. pName)
+        y = y - 14
+    end
+    
+    y = y - 4
+    _, y = CreateNote(profileContent, "Switching profiles requires /reload to fully apply.", y)
+    profileContent:SetHeight(math.abs(y) + 8)
     
     -- ============ UTILITIES ============
     sectionY = sectionY - 30 - SECTION_GAP
@@ -942,7 +1272,34 @@ function Config:ShowItemPicker(barName)
                 table.insert(barSettings.items, { type = cb.itemData.type, id = cb.itemData.id })
             end
         end
-        CDM:Msg("Saved " .. #barSettings.items .. " items to '" .. barName .. "' - /reload to apply")
+        
+        -- Live rebuild: destroy old icons, recreate bar with new item count
+        if CDM.CustomBars and CDM.CustomBars.bars[barName] then
+            local frame = CDM.CustomBars.bars[barName]
+            -- Hide and clear old icons
+            for _, icon in ipairs(frame.icons) do
+                icon:Hide()
+                icon:SetParent(nil)
+            end
+            wipe(frame.icons)
+            
+            -- Create new icons for current items
+            for i = 1, #barSettings.items do
+                local button = CDM.UI:CreateIconButton(frame, {
+                    size = barSettings.iconSize or 40,
+                    showBorder = barSettings.showBorder,
+                    squareIcons = barSettings.squareIcons,
+                    hotkeyFontSize = barSettings.hotkeyFontSize or 12,
+                    masqueGroup = "Custom: " .. barName,
+                })
+                table.insert(frame.icons, button)
+            end
+            
+            CDM.CustomBars:UpdateBar(barName)
+            CDM.CustomBars:UpdateLayout(barName)
+        end
+        
+        CDM:Msg("Saved " .. #barSettings.items .. " items to '" .. barName .. "'")
         picker:Hide()
     end, nil)
     saveBtn:ClearAllPoints()
