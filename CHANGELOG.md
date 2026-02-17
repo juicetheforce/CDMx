@@ -2,6 +2,20 @@
 
 All notable changes to CDMx will be documented in this file.
 
+## [1.0.5] - 2026-02-16
+
+### Macro Hotkey Support
+
+**Fixed: Hotkeys now display for macro'd abilities on Blizzard's Cooldown Manager**
+- Abilities placed on action bars via macros (e.g. `/cast [@mouseover] Lay on Hands`) now correctly show their hotkeys on Essential and Utility cooldown icons
+- Uses Blizzard's `C_ActionBar.FindSpellActionButtons` API for robust resolution — WoW handles all macro parsing internally, so any macro format works (conditionals, mouseover, stopcasting, etc.)
+- Works with both default Blizzard action bars and ElvUI
+- Previous versions only detected spells placed directly on bars, missing any ability wrapped in a macro
+
+**Improved: Diagnostic output**
+- `/cdmxdump` now shows macro slots with resolution info and `FindSpellActionButtons` results for each CDM spell
+- `/cdmxslot` shows `FindSpellActionButtons` data for easier debugging
+
 ## [1.0.4] - 2026-02-14
 
 ### Named Profile System

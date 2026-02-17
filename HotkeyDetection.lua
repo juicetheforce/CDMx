@@ -135,7 +135,13 @@ end
 
 --[[
     Get spell/item ID from an action slot.
+    Handles direct spells, items, and basic macro resolution.
     Returns: spellID, itemID (one will be nil)
+    
+    Note: For macros, this uses GetMacroSpell which works when the id
+    from GetActionInfo is a valid macro index. For cases where it isn't
+    (some UI configurations), FindSpellActionButtons in the lookup path
+    handles it instead.
 ]]--
 function Hotkeys:GetSpellFromSlot(slot)
     local actionType, id = GetActionInfo(slot)
@@ -143,6 +149,18 @@ function Hotkeys:GetSpellFromSlot(slot)
         return id, nil
     elseif actionType == "item" then
         return nil, id
+    elseif actionType == "macro" and id then
+        -- Try direct macro index resolution
+        local spellID = GetMacroSpell(id)
+        if spellID then
+            return spellID, nil
+        end
+        -- Try item resolution
+        local itemName, itemLink = GetMacroItem(id)
+        if itemLink then
+            local itemID = tonumber(itemLink:match("item:(%d+)"))
+            if itemID then return nil, itemID end
+        end
     end
     return nil, nil
 end
@@ -264,17 +282,20 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         end
     end
     
-    -- JIT lookup: scan all slots for matching spell
-    for slot = 1, 180 do
-        local actionType, id = GetActionInfo(slot)
-        if actionType == "spell" and id then
-            for _, targetID in ipairs(idsToCheck) do
-                if id == targetID then
+    -- Primary fallback: Use Blizzard's FindSpellActionButtons API.
+    -- This is the most robust approach — WoW internally resolves macros,
+    -- talent replacements, and other indirections. Given a spell ID, it
+    -- returns all action bar slots that cast it (including macro slots).
+    if C_ActionBar and C_ActionBar.FindSpellActionButtons then
+        for _, checkID in ipairs(idsToCheck) do
+            local slots = C_ActionBar.FindSpellActionButtons(checkID)
+            if slots then
+                for _, slot in ipairs(slots) do
                     local hotkey = self:GetHotkeyForSlot(slot)
                     if hotkey then
                         self.cache[cacheKey] = hotkey
                         if CDM.debug then
-                            CDM:Print(string.format("JIT: spell:%d slot %d -> %s", id, slot, hotkey))
+                            CDM:Print(string.format("FindSpell: spell:%d slot %d -> %s", checkID, slot, hotkey))
                         end
                         return hotkey
                     end
@@ -283,7 +304,27 @@ function Hotkeys:GetHotkeyForSpell(spellID)
         end
     end
     
-    -- ElvUI fallback
+    -- Last resort: manual JIT scan for edge cases where
+    -- FindSpellActionButtons might not be available or misses something
+    for slot = 1, 180 do
+        local resolvedSpell = self:GetSpellFromSlot(slot)
+        if resolvedSpell then
+            for _, targetID in ipairs(idsToCheck) do
+                if resolvedSpell == targetID then
+                    local hotkey = self:GetHotkeyForSlot(slot)
+                    if hotkey then
+                        self.cache[cacheKey] = hotkey
+                        if CDM.debug then
+                            CDM:Print(string.format("JIT: spell:%d slot %d -> %s", resolvedSpell, slot, hotkey))
+                        end
+                        return hotkey
+                    end
+                end
+            end
+        end
+    end
+    
+    -- ElvUI fallback (for ElvUI-specific binding detection)
     if ElvUI then
         local E = unpack(ElvUI)
         if E and E.ActionBars then
@@ -291,10 +332,10 @@ function Hotkeys:GetHotkeyForSpell(spellID)
                 if bar.buttons then
                     for _, button in pairs(bar.buttons) do
                         if button.action then
-                            local actionType, id = GetActionInfo(button.action)
-                            if actionType == "spell" then
+                            local resolvedSpell = self:GetSpellFromSlot(button.action)
+                            if resolvedSpell then
                                 for _, targetID in ipairs(idsToCheck) do
-                                    if id == targetID then
+                                    if resolvedSpell == targetID then
                                         local bindTarget = button.keyBoundTarget or button.bindName
                                         if bindTarget then
                                             local rawKey = GetBindingKey(bindTarget)
@@ -431,6 +472,21 @@ SlashCmdList["CDMDUMP"] = function()
         elseif actionType == "item" then
             local hotkey = Hotkeys:GetHotkeyForSlot(slot) or "NO KEY"
             print(string.format("  Slot %d: item:%d (%s) -> [%s]", slot, id, C_Item.GetItemNameByID(id) or "?", hotkey))
+        elseif actionType == "macro" and id then
+            local hotkey = Hotkeys:GetHotkeyForSlot(slot) or "NO KEY"
+            local macroSpell = GetMacroSpell(id)
+            local resolvedStr = "unresolved"
+            
+            if macroSpell then
+                resolvedStr = string.format("spell:%d (%s)", macroSpell, C_Spell.GetSpellName(macroSpell) or "?")
+            else
+                local macroItemName, macroItemLink = GetMacroItem(id)
+                if macroItemLink then
+                    local macroItemID = tonumber(macroItemLink:match("item:(%d+)"))
+                    resolvedStr = macroItemID and string.format("item:%d (%s)", macroItemID, macroItemName or "?") or ("item:" .. (macroItemName or "?"))
+                end
+            end
+            print(string.format("  Slot %d: macro:%d -> %s -> [%s]", slot, id, resolvedStr, hotkey))
         end
     end
     print("")
@@ -447,9 +503,21 @@ SlashCmdList["CDMDUMP"] = function()
                 local mappedID = Hotkeys.spellIDMap[spellID] or spellID
                 local hotkey = Hotkeys:GetHotkeyForSpell(spellID) or "NOT FOUND"
                 local mapNote = (mappedID ~= spellID) and string.format(" -> mapped:%d", mappedID) or ""
-                print(string.format("  %s[%d]: %s:%d%s (%s) -> [%s]",
+                -- Show FindSpellActionButtons result for diagnostics
+                local findNote = ""
+                if C_ActionBar and C_ActionBar.FindSpellActionButtons then
+                    local slots = C_ActionBar.FindSpellActionButtons(spellID)
+                    if slots and #slots > 0 then
+                        local slotStrs = {}
+                        for _, s in ipairs(slots) do table.insert(slotStrs, tostring(s)) end
+                        findNote = string.format(" (FindSlots:[%s])", table.concat(slotStrs, ","))
+                    else
+                        findNote = " (FindSlots:none)"
+                    end
+                end
+                print(string.format("  %s[%d]: %s:%d%s (%s) -> [%s]%s",
                     viewerName, i, method, spellID, mapNote,
-                    C_Spell.GetSpellName(spellID) or "?", hotkey))
+                    C_Spell.GetSpellName(spellID) or "?", hotkey, findNote))
             end
         end
     end
@@ -497,10 +565,20 @@ SlashCmdList["CDMSLOT"] = function(msg)
             CDM:Msg("Name:", C_Spell.GetSpellName(id) or "?")
         elseif actionType == "item" then
             CDM:Msg("Name:", C_Item.GetItemNameByID(id) or "?")
+        elseif actionType == "macro" then
+            local macroSpell = GetMacroSpell(id)
+            local macroItemName, macroItemLink = GetMacroItem(id)
+            CDM:Msg("Macro resolves to:", macroSpell and ("spell:" .. macroSpell .. " (" .. (C_Spell.GetSpellName(macroSpell) or "?") .. ")") or macroItemName and ("item:" .. macroItemName) or "unresolved")
         end
         CDM:Msg("Hotkey:", Hotkeys:GetHotkeyForSlot(slot) or "None")
-        local cacheKey = actionType == "spell" and ("spell:" .. id) or ("item:" .. id)
-        CDM:Msg("Cached:", Hotkeys.cache[cacheKey] or "NO")
+        local spellID, itemID = Hotkeys:GetSpellFromSlot(slot)
+        local cacheKey = spellID and ("spell:" .. spellID) or itemID and ("item:" .. itemID) or nil
+        CDM:Msg("Resolved:", cacheKey or "nil", "Cached:", cacheKey and Hotkeys.cache[cacheKey] or "NO")
+        -- Show FindSpellActionButtons result if it's a spell
+        if spellID and C_ActionBar and C_ActionBar.FindSpellActionButtons then
+            local slots = C_ActionBar.FindSpellActionButtons(spellID)
+            CDM:Msg("FindSpellActionButtons:", slots and (#slots .. " slots: " .. table.concat(slots, ",")) or "none")
+        end
     else
         CDM:Msg("Empty slot")
     end
