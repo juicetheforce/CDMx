@@ -2,7 +2,7 @@
 ## Title: CDMx
 ## Notes: Cooldown Manager Extended - Adds hotkeys and custom tracking bars
 ## Author: Juicetheforce (with Claude assistance)
-## Version: 1.0.5
+## Version: 1.0.6
 ## SavedVariables: CDMxDB
 ## OptionalDeps: Masque
 ## X-Category: Action Bars

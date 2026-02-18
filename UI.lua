@@ -45,12 +45,14 @@ end
 ]]--
 function UI:FormatHotkey(key)
     if not key then return nil end
+    key = key:upper()
     key = key:gsub("SHIFT%-", "S")
     key = key:gsub("CTRL%-", "C")
     key = key:gsub("ALT%-", "A")
     key = key:gsub("BUTTON", "M")
     key = key:gsub("MOUSEWHEELUP", "MwU")
     key = key:gsub("MOUSEWHEELDOWN", "MwD")
+    key = key:gsub("NUMPAD", "N")
     return key
 end
 

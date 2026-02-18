@@ -2,7 +2,16 @@
 
 All notable changes to CDMx will be documented in this file.
 
-## [1.0.5] - 2026-02-16
+## [1.0.6] - 2026-02-17
+
+### Hotkey Display Fix
+
+**Fixed: Numpad hotkey display**
+- Numpad keys (Numpad1, Numpad2, etc.) now correctly shorten to N1, N2, N3, etc.
+- Previous versions could display the full "NUMPAD1" text depending on how WoW returned the key name
+- Hotkey formatting now normalizes key names to uppercase before processing, preventing any future casing issues
+
+## [1.0.5] - 2026-02-17
 
 ### Macro Hotkey Support
 
